@@ -36,9 +36,17 @@ def to_asyncpg_url(database_url: str) -> str:
 
 
 def _connect_args(settings: Settings) -> dict:
+    args: dict = {
+        # Every timestamp this app writes/reads (login_logs, referral_logs, message_copy_logs,
+        # etc.) should read as IST. Postgres timestamptz always stores an absolute instant in
+        # UTC internally — setting the session timezone here changes how `now()` and every
+        # timestamptz value are interpreted for connections THIS app opens, without needing
+        # superuser access to ALTER DATABASE (works against managed Postgres too).
+        "server_settings": {"timezone": settings.db_timezone},
+    }
     if settings.database_ssl_mode.lower() not in ("disable", "false", "0", ""):
-        return {"ssl": True}
-    return {}
+        args["ssl"] = True
+    return args
 
 
 @lru_cache

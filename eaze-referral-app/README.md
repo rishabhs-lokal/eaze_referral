@@ -18,14 +18,34 @@ Visual system is `Eaze_design_handbook.md`.
 
 ```bash
 npm install
-cp .env.example .env   # point EXPO_PUBLIC_API_BASE_URL at eaze-referral-backend
+cp .env.example .env   # point EXPO_PUBLIC_API_BASE_URL at eaze-referral-service
 npm run web             # or: npx expo start --web
 ```
 
-Open `http://localhost:8081/?ref=<referrerId>` — the `ref` query param stands in for the
-signed-token auth handoff the real banner→webapp flow will eventually pass (see the TODO in
-`src/state/useReferrerId.ts`). Without it, the screen falls back to a `demo-referrer` id so it's
-still viewable standalone.
+Open `http://localhost:8081/?user_id=<base64>` — `user_id` is the real Eaze user id,
+base64-encoded, exactly as the in-app banner's generated URL will carry it (see
+`src/state/useReferrerId.ts`). **There is no fallback.** A user can only ever reach this screen
+via a link the Eaze app itself generated; a missing `user_id` shows a blocking "open this from
+the Eaze app" screen instead of the referral form.
+
+The base64 **decode happens on the backend**, not here (`eaze-referral-service/app/services/identity.py`)
+— this screen just extracts the raw param from the URL and passes it straight through on every
+API call, unmodified. Centralizing the decode server-side means any future caller (a native
+client, direct API use) gets the same normalization for free, and the backend is the one place
+that ever needs to change if the encoding scheme changes.
+
+To build a test URL locally:
+
+```bash
+python3 -c "import base64; print(base64.b64encode(b'some-user-id').decode())"
+# → http://localhost:8081/?user_id=<output>
+```
+
+Every load of this screen (i.e. every call to `GET /api/referral/code/:userId`) records a
+first-seen login in the backend's `login_logs` table — one row per user_id, timestamped on their
+first visit only, never updated on later visits. Every "Copy message" tap and every phone number
+submitted are also logged server-side (`message_copy_logs`, `referral_logs`) — see the backend's
+README for details.
 
 ## Deviations from the design handbook, disclosed
 
@@ -34,8 +54,6 @@ still viewable standalone.
   Native can't apply CSS `font-variation-settings` to reach a variable axis at runtime. Substituted
   `Fraunces_600SemiBold` (see `src/theme/typography.ts`) — swap it the moment the real font file
   is available.
-- **Eaze mark**: no logo asset was supplied, so the top-right mark is a placeholder monogram
-  (`src/components/EazeLogo.tsx`), not the real logo.
 
 ## Known gap
 

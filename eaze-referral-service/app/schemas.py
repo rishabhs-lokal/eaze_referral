@@ -52,6 +52,14 @@ class RechargeWebhookResponse(CamelModel):
     referrer_user_id: int | None = None
 
 
+class MessageCopyLogRequest(CamelModel):
+    user_id: str
+
+
+class MessageCopyLogResponse(CamelModel):
+    logged: bool
+
+
 class FunnelCount(CamelModel):
     status: str
     count: int

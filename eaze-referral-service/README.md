@@ -59,8 +59,9 @@ beyond pointing `EXPO_PUBLIC_API_BASE_URL` at this service.
 |---|---|---|
 | GET | `/healthz` | Liveness — does not touch the database |
 | GET | `/readyz` | Readiness — checks the database is reachable |
-| GET | `/api/referral/code/:userId` | Fetch or lazily create a referrer's durable code + share link |
-| POST | `/api/referral/intents` | Save the phone numbers a referrer enters in the webapp |
+| GET | `/api/referral/code/:userId` | Fetch or lazily create a referrer's durable code + share link. Also records a first-seen login (see below). |
+| POST | `/api/referral/intents` | Save the phone numbers a referrer enters in the webapp. Also appends to `referral_logs` (see below). |
+| POST | `/api/referral/copy-log` | Logs one "Copy message" click for a user — see below |
 | POST | `/api/referral/signup-match` | Called at signup — phone-only attribution (see below), credits the new user 50 coins if matched |
 | POST | `/api/referral/recharge-webhook` | Credits the referrer 50 coins on the referred user's first successful recharge |
 | GET | `/api/referral/admin/funnel` | Status-count visibility into the pipeline |
@@ -71,9 +72,51 @@ only if the referred phone number was pre-entered by a referrer via `/api/referr
 `REFERRAL_PROGRAM_PLAN.md` for why this was deliberately simplified from an earlier code-based
 design.
 
-`:userId` is currently an opaque **external ref** (see the docstring on `User.external_ref` in
-`app/models.py`) — a stand-in for the real Eaze user id until the banner→webapp signed-token auth
-handoff (plan doc §2) exists.
+### Base64 user ids
+
+The banner link carries the real Eaze user id **base64-encoded** in the `user_id` query param
+(see `eaze-referral-app/src/state/useReferrerId.ts`). Decoding happens on the backend, not the
+frontend — `app/services/identity.py`, called once at every entry point that accepts an
+externally-supplied user id (`GET /code/:userId`, `POST /intents`, `POST /copy-log`) via the
+`_decode_or_400` helper in `app/routers/referral.py`. Everything downstream — `users.external_ref`,
+`login_logs`, `referral_logs`, `message_copy_logs` — stores and queries the **decoded original
+id**, never the base64 form. An invalid/undecodable value returns `400`. Centralizing the decode
+here (rather than in the frontend) means any future caller gets the same normalization for free.
+
+### Timestamps are IST
+
+Every timestamp column (`login_logs.first_seen_at`, `referral_logs.recorded_at`,
+`message_copy_logs.copied_at`, etc.) reads as `Asia/Kolkata` wall-clock time. Postgres
+`timestamptz` always stores an absolute UTC instant internally — what changes is the session
+timezone every connection this app opens is set to, via asyncpg's `server_settings` in
+`app/db.py` (`DB_TIMEZONE`, defaults to `Asia/Kolkata`). This is portable to managed Postgres
+(no superuser `ALTER DATABASE` needed). The local Compose `db` container additionally runs with
+`-c timezone=Asia/Kolkata` so a raw `psql` session sees IST too.
+
+### Login tracking
+
+Every `GET /api/referral/code/:userId` call — i.e. every time the webapp loads for a given user —
+calls `record_first_login()`, which inserts into `login_logs (user_id, first_seen_at)`. This is
+idempotent: `ON CONFLICT (user_id) DO NOTHING`, so a user's row is written once, on their first
+visit ever, and never touched again on later visits. There's deliberately no per-visit log — just
+first-seen timestamps, one row per user_id.
+
+### Referral logs
+
+`referral_logs (user_id, phone_e164, recorded_at)` — an **append-only audit trail** of every
+validly-formatted phone number a referrer submitted via `POST /api/referral/intents`, logged on
+every submission with no dedup. This is distinct from `referral_intents` (which enforces
+one-referrer-per-phone globally and drives the actual reward pipeline) — `referral_logs` exists
+purely so nothing a user submitted is ever lost from the record, even numbers that
+`referral_intents` rejected as duplicates.
+
+### Message copy logs
+
+`message_copy_logs (user_id, copied_at)` — one row per tap of "Copy message"
+(`POST /api/referral/copy-log`, called by the webapp on every click, fire-and-forget). Unlike
+`login_logs`, this is **not** idempotent — every call inserts a new row. The "number of times a
+user copied the message" is `COUNT(*) GROUP BY user_id`; individual click timestamps are kept
+rather than collapsed into a running counter.
 
 ## Generic database client
 

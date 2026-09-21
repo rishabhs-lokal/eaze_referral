@@ -10,7 +10,18 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Recharge, Referral, ReferralClick, ReferralCode, ReferralIntent, User, WalletTransaction
+from app.models import (
+    LoginLog,
+    MessageCopyLog,
+    Recharge,
+    Referral,
+    ReferralClick,
+    ReferralCode,
+    ReferralIntent,
+    ReferralLog,
+    User,
+    WalletTransaction,
+)
 from app.services.codes import generate_referral_code
 from app.services.db_helpers import transaction
 from app.services.phone import is_valid_indian_e164
@@ -50,6 +61,33 @@ async def get_or_create_user_by_external_ref(session: AsyncSession, external_ref
 
     result = await session.execute(select(User).where(User.external_ref == external_ref))
     return result.scalar_one()
+
+
+async def record_first_login(session: AsyncSession, user_id: str) -> None:
+    """Idempotent — inserts a row only the first time this user_id is ever seen. Called on every
+    GET /api/referral/code/:userId (i.e. every time the webapp loads for that user), but only the
+    first call for a given user_id actually writes a row."""
+    async with transaction(session):
+        stmt = pg_insert(LoginLog.__table__).values(user_id=user_id).on_conflict_do_nothing(index_elements=["user_id"])
+        await session.execute(stmt)
+
+
+async def record_referral_log(session: AsyncSession, user_id: str, phone_numbers: list[str]) -> None:
+    """Append-only — logs every validly-formatted phone number a referrer submitted, every time,
+    regardless of whether referral_intents ultimately accepted it (e.g. as a duplicate). This is
+    a full audit trail, not the attribution source of truth."""
+    valid_phones = [p for p in phone_numbers if is_valid_indian_e164(p)]
+    if not valid_phones:
+        return
+    async with transaction(session):
+        session.add_all([ReferralLog(user_id=user_id, phone_e164=phone) for phone in valid_phones])
+
+
+async def record_message_copy(session: AsyncSession, user_id: str) -> None:
+    """Every call adds a new row — this is a click counter, not an idempotent/first-seen log.
+    COUNT(*) GROUP BY user_id gives the "number of times" a user copied the message."""
+    async with transaction(session):
+        session.add(MessageCopyLog(user_id=user_id))
 
 
 async def get_or_create_referral_code(session: AsyncSession, user: User) -> str:

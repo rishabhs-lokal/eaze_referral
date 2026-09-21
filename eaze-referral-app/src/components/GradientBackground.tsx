@@ -10,7 +10,12 @@ import { colors } from '../theme';
 // fully transparent well above the fold so cards/text lower on the screen sit on plain #171A1D.
 export function GradientBackground() {
   return (
-    <Svg style={StyleSheet.absoluteFill} width="100%" height="100%" preserveAspectRatio="none">
+    <Svg
+      style={[StyleSheet.absoluteFill, { pointerEvents: 'none' }]}
+      width="100%"
+      height="100%"
+      preserveAspectRatio="none"
+    >
       <Defs>
         <RadialGradient id="warmBlob" cx="8%" cy="-6%" r="62%" gradientUnits="objectBoundingBox">
           <Stop offset="0%" stopColor="#A8703F" stopOpacity={0.95} />

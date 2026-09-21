@@ -1,6 +1,10 @@
 services:
   db:
     image: postgres:16-alpine
+    # -c timezone=Asia/Kolkata: makes the container's own default session timezone IST too, so
+    # a raw `psql` connection (not just this app's own connections, which set it independently
+    # via asyncpg server_settings — see app/db.py) also sees timestamps in IST.
+    command: ["postgres", "-c", "timezone=Asia/Kolkata"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -25,6 +29,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/eaze
+      DB_TIMEZONE: Asia/Kolkata
     depends_on:
       db:
         condition: service_healthy
@@ -37,6 +42,7 @@ services:
       - "8090:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/eaze
+      DB_TIMEZONE: Asia/Kolkata
       PUBLIC_BASE_URL: http://localhost:8090
       PLAY_STORE_URL: https://play.google.com/store/apps/details?id=com.eaze.app
       APP_STORE_URL: https://apps.apple.com/app/idXXXXXXXXX

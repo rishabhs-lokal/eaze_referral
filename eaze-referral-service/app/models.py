@@ -16,6 +16,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -115,6 +116,46 @@ class Referral(Base):
     recharge_rewarded_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class LoginLog(Base):
+    """Records the first time each user_id (as decoded from the banner link's base64 `user_id`
+    query param — see eaze-referral-app/src/state/useReferrerId.ts) is seen by the webapp.
+    One row per user_id, ever — `first_seen_at` is never updated on later visits."""
+
+    __tablename__ = "login_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ReferralLog(Base):
+    """Append-only audit trail of every phone number a referrer submitted, and when — distinct
+    from `referral_intents`, which enforces one-referrer-per-phone and drives the reward
+    pipeline. This table has no dedup: the program's own reporting depends on seeing every
+    submission a user made, not just the one that won attribution."""
+
+    __tablename__ = "referral_logs"
+    __table_args__ = (Index("idx_referral_logs_user_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    phone_e164: Mapped[str] = mapped_column(String(16), nullable=False)
+    recorded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class MessageCopyLog(Base):
+    """One row per tap of "Copy message" — user_id and when. The count of times a user copied
+    is COUNT(*) GROUP BY user_id; kept as a full log rather than a running counter so individual
+    click times are preserved too, not just a total."""
+
+    __tablename__ = "message_copy_logs"
+    __table_args__ = (Index("idx_message_copy_logs_user_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    copied_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class WalletTransaction(Base):

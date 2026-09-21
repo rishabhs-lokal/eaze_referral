@@ -27,6 +27,18 @@ Two design changes made during the build, not in the original plan below:
    specifically named" rather than the original wording's "signed up via the link" — a stronger
    and more robust signal than link-clicking, and it means the real Eaze signup screen needs zero
    UI changes (no code field) to support this.
+3. The referrer identity handoff is now live, not a placeholder: the banner link carries the
+   real Eaze user id as a base64-encoded `user_id` query param
+   (`eaze-referral-app/src/state/useReferrerId.ts`). Decoding happens on the **backend**
+   (`eaze-referral-service/app/services/identity.py`), not the frontend, so every downstream
+   table stores the real decoded id — the frontend never touches the encoding at all. There is no
+   dev fallback — a missing `user_id` shows a blocking "open this from the Eaze app" screen
+   instead of the referral form, so the webapp is unusable outside of a link the Eaze app itself
+   generated. Three tables now track activity, all keyed on the decoded user_id and timestamped
+   in IST (`DB_TIMEZONE=Asia/Kolkata`, set at the connection level in `app/db.py`):
+   - `login_logs` — first-seen visit only, one row per user ever (migration `0002`).
+   - `referral_logs` — append-only, every phone number a referrer ever submitted (migration `0003`).
+   - `message_copy_logs` — one row per "Copy message" tap, for a per-user click count (migration `0003`).
 
 ## Assumptions (flag if wrong — they change the schema)
 - Eaze auth is phone number + OTP (recharge apps almost always are). Phone number is treated as the canonical identity anchor.

@@ -17,6 +17,8 @@ export const referralCopy = {
   submitSuccessToast: 'Numbers saved',
   submitFailedToast: "Couldn't save your numbers, try again",
   maxPhoneFields: 5,
+  missingLinkHeadline: 'Open this from the Eaze app',
+  missingLinkBody: "This page only works when it's opened through the Refer a friend banner in Eaze.",
 };
 
 // `shareUrl` is a redirect (e.g. https://l.eaze.app/r/EAZE-XXXX) that logs the click server-side

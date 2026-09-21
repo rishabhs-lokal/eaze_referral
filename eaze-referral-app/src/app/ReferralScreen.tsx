@@ -21,7 +21,7 @@ import { copyToClipboard } from '../platform/clipboard';
 import { useReferrerId } from '../state/useReferrerId';
 import { useToast } from '../state/useToast';
 import { getPlatformKind } from '../state/platformKind';
-import { fetchReferralCode, submitReferralIntents, ReferralCodeResponse } from '../api/referralApi';
+import { fetchReferralCode, submitReferralIntents, logMessageCopy, ReferralCodeResponse } from '../api/referralApi';
 import { toE164 } from '../state/phoneValidation';
 
 // On an actual iOS/Android WebView this is always the full device width, so this only visibly
@@ -31,12 +31,9 @@ const MAX_CONTENT_WIDTH = 480;
 
 type PhoneField = { id: number; local: string; valid: boolean };
 
-// Dev-only fallback so the screen is viewable before the banner→webapp auth handoff exists
-// (see useReferrerId.ts TODO). Never used once that handoff is wired up.
-const DEV_FALLBACK_REFERRER_ID = 'demo-referrer';
-
 export function ReferralScreen() {
-  const referrerId = useReferrerId() ?? DEV_FALLBACK_REFERRER_ID;
+  const referrerStatus = useReferrerId();
+  const referrerId = referrerStatus.status === 'ready' ? referrerStatus.userId : null;
   const { toast, showToast } = useToast();
 
   const [referralCode, setReferralCode] = useState<ReferralCodeResponse | null>(null);
@@ -53,6 +50,7 @@ export function ReferralScreen() {
   const platformKind = useRef(getPlatformKind()).current;
 
   const loadCode = useCallback(() => {
+    if (!referrerId) return;
     setCodeLoading(true);
     setCodeError(false);
     fetchReferralCode(referrerId)
@@ -62,15 +60,17 @@ export function ReferralScreen() {
   }, [referrerId]);
 
   useEffect(() => {
-    loadCode();
-  }, [loadCode]);
+    if (referrerId) loadCode();
+  }, [referrerId, loadCode]);
 
   const handleCopy = useCallback(async () => {
-    if (!referralCode) return;
+    if (!referralCode || !referrerId) return;
     const message = buildShareMessage({ shareUrl: referralCode.shareUrl });
     const ok = await copyToClipboard(message);
     showToast(ok ? 'success' : 'error', ok ? referralCopy.copiedToast : referralCopy.copyFailedToast);
-  }, [referralCode, showToast]);
+    // Best-effort — the click count matters, but it should never block or fail the copy itself.
+    logMessageCopy(referrerId).catch(() => {});
+  }, [referralCode, referrerId, showToast]);
 
   const updateField = (id: number, local: string) => {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, local } : f)));
@@ -91,6 +91,7 @@ export function ReferralScreen() {
   };
 
   const handleSubmit = async () => {
+    if (!referrerId) return;
     setAttemptedSubmit(true);
     const allValid = fields.every((f) => f.valid);
     if (!allValid) return;
@@ -115,6 +116,37 @@ export function ReferralScreen() {
       setSubmitting(false);
     }
   };
+
+  if (referrerStatus.status === 'loading') {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+        <GradientBackground />
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={colors.primary[500]} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (referrerStatus.status === 'missing') {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+        <GradientBackground />
+        <View style={styles.scrollContent}>
+          <View style={styles.contentMaxWidth}>
+            <View style={styles.header}>
+              <View />
+              <EazeLogo />
+            </View>
+            <View style={styles.hero}>
+              <Text style={styles.headline}>{referralCopy.missingLinkHeadline}</Text>
+              <Text style={styles.body}>{referralCopy.missingLinkBody}</Text>
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
@@ -235,6 +267,11 @@ const styles = StyleSheet.create({
   body: {
     ...type.body1,
     color: white[80],
+  },
+  centerFill: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   codeLoading: {
     height: 96,

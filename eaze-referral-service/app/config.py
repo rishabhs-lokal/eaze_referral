@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # "disable" for local Docker Compose Postgres (no TLS listener); set to "require" for managed
     # providers (RDS, Cloud SQL, Supabase, ...) that mandate TLS.
     database_ssl_mode: str = "disable"
+    # Session timezone set on every connection this app opens — every timestamp we write or read
+    # (login_logs, referral_logs, message_copy_logs, ...) is interpreted/displayed in this zone.
+    db_timezone: str = "Asia/Kolkata"
 
     # Per-pod pool sizing. With N pod replicas, total connections against the database is
     # N * (db_pool_size + db_pool_max_overflow) — keep this in mind against the database's
