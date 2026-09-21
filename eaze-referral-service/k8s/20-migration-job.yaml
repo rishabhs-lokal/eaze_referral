@@ -1,0 +1,38 @@
+# Runs `alembic upgrade head` once, then exits. Deliberately NOT an initContainer on the API
+# Deployment: with multiple replicas, an initContainer would run once per pod and race N copies
+# of the migration against each other. scripts/deploy.sh applies this and waits for it to
+# complete before rolling out the Deployment.
+#
+# Job specs are immutable — re-running a deploy means deleting the old Job first.
+# scripts/deploy.sh does this (`kubectl delete job ... --ignore-not-found`) so this manifest can
+# stay static across deploys.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: eaze-referral-migrate
+  namespace: eaze-referral
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: eaze-referral-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ${IMAGE}
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: eaze-referral-config
+            - secretRef:
+                name: eaze-referral-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

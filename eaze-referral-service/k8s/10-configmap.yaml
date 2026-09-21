@@ -1,0 +1,18 @@
+# Non-secret configuration. DATABASE_URL lives in a Secret (11-secret.example.yaml), never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eaze-referral-config
+  namespace: eaze-referral
+data:
+  PUBLIC_BASE_URL: "https://refer.eaze.app"
+  PLAY_STORE_URL: "https://play.google.com/store/apps/details?id=com.eaze.app"
+  APP_STORE_URL: "https://apps.apple.com/app/idXXXXXXXXX"
+  FALLBACK_URL: "https://play.google.com/store/apps/details?id=com.eaze.app"
+  LOG_LEVEL: "info"
+  DATABASE_SSL_MODE: "require"
+  # Per-pod pool sizing — total connections against the database is roughly
+  # replicas * (DB_POOL_SIZE + DB_POOL_MAX_OVERFLOW). Tune alongside the Deployment's replica
+  # count and the database's max_connections.
+  DB_POOL_SIZE: "5"
+  DB_POOL_MAX_OVERFLOW: "5"
