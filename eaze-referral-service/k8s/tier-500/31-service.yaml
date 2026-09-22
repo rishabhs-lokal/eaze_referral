@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: eaze-referral-api
+  namespace: eaze-referral-500
+spec:
+  selector:
+    app: eaze-referral-api
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: ClusterIP

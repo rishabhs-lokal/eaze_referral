@@ -3,14 +3,24 @@
 # rolls out the Deployment. Plain Kubernetes manifests have no native "run this Job first" hook
 # (that's a Helm feature) — this script is that ordering, made explicit and re-runnable.
 #
-# Usage: IMAGE=registry.example.com/eaze-referral-service:1.2.3 ./scripts/deploy.sh
+# Same image, two independent reward tiers, picked by TIER (see k8s/tier-1000/ and
+# k8s/tier-500/ — each is its own namespace, ConfigMap, and Deployment/Service, so the two run
+# side by side without interfering). There is no default/un-tiered deployment — TIER is required.
+#
+# Usage: IMAGE=registry.example.com/eaze-referral-service:1.2.3 TIER=1000 ./scripts/deploy.sh
+#        IMAGE=registry.example.com/eaze-referral-service:1.2.3 TIER=500 ./scripts/deploy.sh
 set -euo pipefail
 
 : "${IMAGE:?Set IMAGE to the image tag to deploy, e.g. IMAGE=ghcr.io/you/eaze-referral-service:1.2.3}"
-NAMESPACE=eaze-referral
+: "${TIER:?Set TIER to 1000 or 500 — there is no default/un-tiered deployment}"
+case "$TIER" in
+  1000|500) ;;
+  *) echo "!! TIER must be 1000 or 500, got: $TIER" >&2; exit 1 ;;
+esac
+NAMESPACE="eaze-referral-$TIER"
 KUBECTL="${KUBECTL:-kubectl}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-K8S_DIR="$SCRIPT_DIR/../k8s"
+K8S_DIR="$SCRIPT_DIR/../k8s/tier-$TIER"
 
 echo "==> Applying namespace and config"
 "$KUBECTL" apply -f "$K8S_DIR/00-namespace.yaml"

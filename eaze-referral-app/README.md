@@ -16,11 +16,28 @@ Visual system is `Eaze_design_handbook.md`.
 
 ## Setup
 
+There is no default/un-tiered build — pick a tier's example env file:
+
 ```bash
 npm install
-cp .env.example .env   # point EXPO_PUBLIC_API_BASE_URL at eaze-referral-service
-npm run web             # or: npx expo start --web
+cp .env.tier-1000.example .env   # or .env.tier-500.example
+npm run web                       # or: npx expo start --web
 ```
+
+## Reward tiers
+
+`EXPO_PUBLIC_REWARD_COINS` in `.env` is the one thing that changes between builds of this same
+app for the 1000-coin vs. 500-coin backend deployments (see `eaze-referral-service`'s README) —
+it's inlined at build time (Expo/Metro convention for `EXPO_PUBLIC_*` vars) and drives every
+"X coins" string in `src/content/referral.ts`. A missing or non-positive value throws at module
+load instead of silently rendering a made-up coin amount — there's no fallback. Point it and
+`EXPO_PUBLIC_API_BASE_URL` at the same tier's backend port so the copy on screen always matches
+what that backend will actually credit:
+
+| Tier | `EXPO_PUBLIC_REWARD_COINS` | `EXPO_PUBLIC_API_BASE_URL` (local Compose) |
+|---|---|---|
+| 1000-coin | `1000` | `http://localhost:8091` |
+| 500-coin | `500` | `http://localhost:8092` |
 
 Open `http://localhost:8081/?user_id=<base64>` — `user_id` is the real Eaze user id,
 base64-encoded, exactly as the in-app banner's generated URL will carry it (see

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: eaze-referral-api
-  namespace: eaze-referral
+  namespace: eaze-referral-1000
   labels:
     app: eaze-referral-api
 spec:

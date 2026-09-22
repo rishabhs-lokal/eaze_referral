@@ -4,4 +4,4 @@ __pycache__/
 venv/
 .env
 .pytest_cache/
-k8s/11-secret.yaml
+k8s/tier-*/11-secret.yaml

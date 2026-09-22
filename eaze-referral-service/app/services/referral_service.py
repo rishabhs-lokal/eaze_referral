@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings
 from app.models import (
     LoginLog,
     MessageCopyLog,
@@ -27,9 +28,6 @@ from app.services.db_helpers import transaction
 from app.services.phone import is_valid_indian_e164
 
 logger = logging.getLogger("eaze_referral.service")
-
-SIGNUP_BONUS = 50
-RECHARGE_BONUS = 50
 
 
 class PhoneAlreadyRegisteredError(Exception):
@@ -146,7 +144,7 @@ async def submit_intents(
     return saved, skipped
 
 
-async def signup_match(session: AsyncSession, phone_e164: str) -> dict:
+async def signup_match(session: AsyncSession, phone_e164: str, settings: Settings) -> dict:
     """Stands in for the hook the real Eaze signup flow would call right after OTP verification
     succeeds for a brand-new phone number.
 
@@ -199,7 +197,7 @@ async def signup_match(session: AsyncSession, phone_e164: str) -> dict:
                 pg_insert(WalletTransaction.__table__)
                 .values(
                     user_id=new_user.id,
-                    amount=SIGNUP_BONUS,
+                    amount=settings.signup_bonus_coins,
                     type="REFERRAL_SIGNUP_BONUS",
                     reference_type="referral",
                     reference_id=referral_id,
@@ -209,17 +207,19 @@ async def signup_match(session: AsyncSession, phone_e164: str) -> dict:
             await session.execute(
                 update(User.__table__)
                 .where(User.id == new_user.id)
-                .values(wallet_balance=User.wallet_balance + SIGNUP_BONUS)
+                .values(wallet_balance=User.wallet_balance + settings.signup_bonus_coins)
             )
 
         return {
             "user_id": new_user.id,
             "referred": referral_id is not None,
-            "coins_credited": SIGNUP_BONUS if referral_id else 0,
+            "coins_credited": settings.signup_bonus_coins if referral_id else 0,
         }
 
 
-async def recharge_webhook(session: AsyncSession, user_id: int, amount_paise: int, status: str) -> dict:
+async def recharge_webhook(
+    session: AsyncSession, user_id: int, amount_paise: int, status: str, settings: Settings
+) -> dict:
     """Stands in for the payment gateway webhook. Credits the referrer only on the referred
     user's first-ever successful recharge, idempotently."""
     async with transaction(session):
@@ -260,7 +260,7 @@ async def recharge_webhook(session: AsyncSession, user_id: int, amount_paise: in
             pg_insert(WalletTransaction.__table__)
             .values(
                 user_id=referrer_user_id,
-                amount=RECHARGE_BONUS,
+                amount=settings.recharge_bonus_coins,
                 type="REFERRAL_RECHARGE_BONUS",
                 reference_type="referral",
                 reference_id=referral_id,
@@ -270,7 +270,7 @@ async def recharge_webhook(session: AsyncSession, user_id: int, amount_paise: in
         await session.execute(
             update(User.__table__)
             .where(User.id == referrer_user_id)
-            .values(wallet_balance=User.wallet_balance + RECHARGE_BONUS)
+            .values(wallet_balance=User.wallet_balance + settings.recharge_bonus_coins)
         )
 
         return {"credited": True, "referrer_user_id": referrer_user_id, "recharge_id": recharge_id}

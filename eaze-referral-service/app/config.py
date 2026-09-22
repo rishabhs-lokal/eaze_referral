@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     db_startup_retry_attempts: int = 10
     db_startup_retry_delay_seconds: float = 2.0
 
+    # The two things that actually differ between the 1000-coin and 500-coin deployments of this
+    # exact same codebase — see docker-compose.tier-*.yml and k8s/tier-*/. No default: there is no
+    # un-tiered deployment anymore, so a config that forgets to set these fails at startup instead
+    # of silently running as some other, unintended reward amount.
+    signup_bonus_coins: int
+    recharge_bonus_coins: int
+
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"
     app_store_url: str = "https://apps.apple.com/app/idXXXXXXXXX"

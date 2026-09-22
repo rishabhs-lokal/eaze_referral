@@ -3,8 +3,12 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: eaze-referral-config
-  namespace: eaze-referral
+  namespace: eaze-referral-500
 data:
+  # The only two keys that differ from k8s/tier-1000/10-configmap.yaml — everything else in this
+  # namespace runs the identical image as the 1000-coin tier.
+  SIGNUP_BONUS_COINS: "500"
+  RECHARGE_BONUS_COINS: "500"
   PUBLIC_BASE_URL: "https://refer.eaze.app"
   PLAY_STORE_URL: "https://play.google.com/store/apps/details?id=com.eaze.app"
   APP_STORE_URL: "https://apps.apple.com/app/idXXXXXXXXX"

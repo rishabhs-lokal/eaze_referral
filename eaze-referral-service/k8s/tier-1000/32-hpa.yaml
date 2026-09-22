@@ -4,7 +4,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: eaze-referral-api
-  namespace: eaze-referral
+  namespace: eaze-referral-1000
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

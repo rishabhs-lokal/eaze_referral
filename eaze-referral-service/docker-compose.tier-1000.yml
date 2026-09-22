@@ -1,0 +1,71 @@
+# The 1000-coin variant of this exact same codebase — run side by side with
+# docker-compose.tier-500.yml on their own ports, volumes, and Postgres database. There is no
+# default/un-tiered stack. Nothing in app/ forks between tiers; only these env vars differ.
+# See docker-compose.tier-500.yml and k8s/tier-1000/ for the k8s equivalent.
+#
+# Usage: docker compose -f docker-compose.tier-1000.yml up --build
+#
+# `name:` is pinned explicitly — Compose otherwise derives the project name from the current
+# directory, and both tier files live in the same directory. Without a pinned name they'd
+# resolve to the same project and silently recreate each other's containers instead of running
+# side by side.
+name: eaze-referral-service-tier-1000
+services:
+  db:
+    image: postgres:16-alpine
+    command: ["postgres", "-c", "timezone=Asia/Kolkata"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: eaze
+    ports:
+      # Distinct host port from tier-500 (5534) — both can run at once.
+      - "5533:5432"
+    volumes:
+      - eaze_referral_pgdata_1000:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eaze"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/eaze
+      DB_TIMEZONE: Asia/Kolkata
+      # alembic/env.py imports app.config, and Settings has no default for these — required here
+      # too, not just in `app`, or migrations fail before ever touching the coin logic.
+      SIGNUP_BONUS_COINS: "1000"
+      RECHARGE_BONUS_COINS: "1000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    ports:
+      - "8091:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/eaze
+      DB_TIMEZONE: Asia/Kolkata
+      SIGNUP_BONUS_COINS: "1000"
+      RECHARGE_BONUS_COINS: "1000"
+      PUBLIC_BASE_URL: http://localhost:8091
+      PLAY_STORE_URL: https://play.google.com/store/apps/details?id=com.eaze.app
+      APP_STORE_URL: https://apps.apple.com/app/idXXXXXXXXX
+      FALLBACK_URL: https://play.google.com/store/apps/details?id=com.eaze.app
+      LOG_LEVEL: info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  eaze_referral_pgdata_1000:

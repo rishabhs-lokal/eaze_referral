@@ -68,8 +68,9 @@ async def log_message_copy(
 async def signup_match(body: SignupMatchRequest, session: AsyncSession = Depends(get_db)) -> SignupMatchResponse:
     if not is_valid_indian_e164(body.phone_e164):
         raise HTTPException(status_code=400, detail="A valid phoneE164 is required")
+    settings = get_settings()
     try:
-        result = await referral_service.signup_match(session, body.phone_e164)
+        result = await referral_service.signup_match(session, body.phone_e164, settings)
     except referral_service.PhoneAlreadyRegisteredError:
         raise HTTPException(status_code=409, detail="Phone number already registered")
     return SignupMatchResponse(**result)
@@ -79,7 +80,10 @@ async def signup_match(body: SignupMatchRequest, session: AsyncSession = Depends
 async def recharge_webhook(
     body: RechargeWebhookRequest, session: AsyncSession = Depends(get_db)
 ) -> RechargeWebhookResponse:
-    result = await referral_service.recharge_webhook(session, body.user_id, body.amount_paise, body.status)
+    settings = get_settings()
+    result = await referral_service.recharge_webhook(
+        session, body.user_id, body.amount_paise, body.status, settings
+    )
     return RechargeWebhookResponse(**result)
 
 

@@ -19,22 +19,22 @@ implements the pipeline documented in `../REFERRAL_PROGRAM_PLAN.md`.
 
 ## Run it locally (Docker Compose)
 
+There is no default/un-tiered stack — pick a reward tier (see [Reward tiers](#reward-tiers-1000-vs-500-coins)
+below for the full picture):
+
 ```bash
-docker compose up --build
+docker compose -f docker-compose.tier-1000.yml up --build   # 1000 coins, API on :8091
+docker compose -f docker-compose.tier-500.yml up --build    # 500 coins, API on :8092
 ```
 
-This runs three services, matching the `db` / `migrate` / `app` pattern:
-
-1. `db` — Postgres 16, host port **5532** (not 5432, to avoid clashing with any other local
-   Postgres already using the default port).
-2. `migrate` — runs `alembic upgrade head` once and exits. `app` won't start until this completes
-   successfully (`depends_on: condition: service_completed_successfully`).
-3. `app` — the API, host port **8090** (8000 was already taken locally in this environment; change
-   freely in `docker-compose.yml`).
+Each runs three services, matching the `db` / `migrate` / `app` pattern: `db` (Postgres 16),
+`migrate` (runs `alembic upgrade head` once and exits — `app` won't start until it completes
+successfully), and `app` (the API). Both tiers can run at once; they're on distinct ports and
+Postgres databases.
 
 ```bash
-curl http://localhost:8090/healthz
-curl http://localhost:8090/api/referral/code/demo-referrer
+curl http://localhost:8091/healthz
+curl http://localhost:8091/api/referral/code/demo-referrer
 ```
 
 ## Run it locally (without Docker)
@@ -42,8 +42,8 @@ curl http://localhost:8090/api/referral/code/demo-referrer
 ```bash
 python3.14 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-docker compose up -d db          # just the database
-cp .env.example .env             # DATABASE_URL already points at localhost:5532
+docker compose -f docker-compose.tier-1000.yml up -d db   # just that tier's database
+cp .env.tier-1000.example .env   # or .env.tier-500.example — there is no default .env.example
 alembic upgrade head
 uvicorn app.main:app --reload
 pytest                            # unit tests (phone validation, etc.)
@@ -62,8 +62,8 @@ beyond pointing `EXPO_PUBLIC_API_BASE_URL` at this service.
 | GET | `/api/referral/code/:userId` | Fetch or lazily create a referrer's durable code + share link. Also records a first-seen login (see below). |
 | POST | `/api/referral/intents` | Save the phone numbers a referrer enters in the webapp. Also appends to `referral_logs` (see below). |
 | POST | `/api/referral/copy-log` | Logs one "Copy message" click for a user — see below |
-| POST | `/api/referral/signup-match` | Called at signup — phone-only attribution (see below), credits the new user 50 coins if matched |
-| POST | `/api/referral/recharge-webhook` | Credits the referrer 50 coins on the referred user's first successful recharge |
+| POST | `/api/referral/signup-match` | Called at signup — phone-only attribution (see below), credits the new user `SIGNUP_BONUS_COINS` if matched |
+| POST | `/api/referral/recharge-webhook` | Credits the referrer `RECHARGE_BONUS_COINS` on the referred user's first successful recharge |
 | GET | `/api/referral/admin/funnel` | Status-count visibility into the pipeline |
 | GET | `/r/:code` | The link in the copyable share message — logs a click, then redirects to the Play Store or App Store by user agent |
 
@@ -118,6 +118,47 @@ purely so nothing a user submitted is ever lost from the record, even numbers th
 user copied the message" is `COUNT(*) GROUP BY user_id`; individual click timestamps are kept
 rather than collapsed into a running counter.
 
+## Reward tiers (1000 vs 500 coins)
+
+Two coin amounts are deployed side by side — same codebase, same image, nothing forked. **There
+is no default/un-tiered deployment**: `SIGNUP_BONUS_COINS` / `RECHARGE_BONUS_COINS` (see
+`app/config.py`) have no default value, so a deployment that forgets to set them fails at startup
+instead of silently running as some unintended reward amount.
+
+**Locally (Docker Compose)** — two independent stacks can run at once, each with its own
+Postgres, its own port, and a pinned Compose `name:` so they never collide with each other:
+
+| Stack | Coins | API port | DB port |
+|---|---|---|---|
+| `docker-compose.tier-1000.yml` | 1000 | 8091 | 5533 |
+| `docker-compose.tier-500.yml` | 500 | 8092 | 5534 |
+
+```bash
+docker compose -f docker-compose.tier-1000.yml up --build -d
+docker compose -f docker-compose.tier-500.yml up --build -d
+```
+
+**On Kubernetes** — `k8s/tier-1000/` and `k8s/tier-500/` are the only manifest sets (there is no
+top-level `k8s/`), each in its own namespace (`eaze-referral-1000` / `eaze-referral-500`) with its
+own ConfigMap, Secret, Deployment, Service, and migration Job. `scripts/deploy.sh` requires a
+`TIER` env var:
+
+```bash
+IMAGE=<registry>/eaze-referral-service:1.0.0 TIER=1000 ./scripts/deploy.sh
+IMAGE=<registry>/eaze-referral-service:1.0.0 TIER=500  ./scripts/deploy.sh
+```
+
+**Tracking comes for free.** Because each tier is a fully separate deployment with its own
+database, every existing table — `login_logs`, `referral_logs`, `message_copy_logs`,
+`wallet_transactions` — is automatically scoped to that tier. There's no shared table to filter
+by variant and no risk of one tier's numbers leaking into the other's; querying either database
+in isolation *is* that tier's tracking. `GET /api/referral/admin/funnel` reports independently
+per tier for the same reason.
+
+On the frontend, `eaze-referral-app/.env`'s `EXPO_PUBLIC_REWARD_COINS` and
+`EXPO_PUBLIC_API_BASE_URL` are what make a given build of the webapp show the right number and
+talk to the right tier's backend — see that app's README.
+
 ## Generic database client
 
 `app/db.py` accepts any standard `postgresql://` URL via the `DATABASE_URL` env var — nothing
@@ -135,25 +176,27 @@ provider-specific. Key knobs, all via env vars (see `app/config.py`):
 ## Deploying to Kubernetes (multiple pods)
 
 ```bash
-# 1. Build and push your image
+# 1. Build and push your image (same image serves both tiers)
 docker build -t <your-registry>/eaze-referral-service:1.0.0 .
 docker push <your-registry>/eaze-referral-service:1.0.0
 
-# 2. Create the DB secret (copy the template, fill in the real value — or better, generate this
-#    from your actual secret manager instead of applying a plain manifest)
-cp k8s/11-secret.example.yaml k8s/11-secret.yaml
-# edit k8s/11-secret.yaml with the real DATABASE_URL
+# 2. Create the DB secret for the tier you're deploying (copy the template, fill in the real
+#    value — or better, generate this from your actual secret manager instead of applying a
+#    plain manifest)
+cp k8s/tier-1000/11-secret.example.yaml k8s/tier-1000/11-secret.yaml
+# edit k8s/tier-1000/11-secret.yaml with the real DATABASE_URL
 
 # 3. Deploy — applies config, runs the migration Job to completion, THEN rolls out the Deployment
-IMAGE=<your-registry>/eaze-referral-service:1.0.0 ./scripts/deploy.sh
+IMAGE=<your-registry>/eaze-referral-service:1.0.0 TIER=1000 ./scripts/deploy.sh
 ```
 
-`k8s/` contains:
+Repeat steps 2-3 with `k8s/tier-500/` and `TIER=500` for the other tier — the two namespaces are
+fully independent. Each of `k8s/tier-1000/` and `k8s/tier-500/` contains:
 
 | File | What |
 |---|---|
-| `00-namespace.yaml` | `eaze-referral` namespace |
-| `10-configmap.yaml` | Non-secret config |
+| `00-namespace.yaml` | The tier's namespace (`eaze-referral-1000` / `eaze-referral-500`) |
+| `10-configmap.yaml` | Non-secret config, including that tier's `SIGNUP_BONUS_COINS`/`RECHARGE_BONUS_COINS` |
 | `11-secret.example.yaml` | Template for `DATABASE_URL` — copy to `11-secret.yaml` (gitignored) or generate from a real secret manager |
 | `20-migration-job.yaml` | Runs `alembic upgrade head` once, exits |
 | `30-deployment.yaml` | 3 replicas, rolling updates with zero downtime (`maxUnavailable: 0`), readiness/liveness probes, resource limits |
@@ -167,10 +210,14 @@ Deployment. Job specs are immutable, so the script deletes any previous run of t
 first — this is the same ordering a `helm.sh/hook-delete-policy: before-hook-creation` pre-install
 hook would give you, made explicit for plain manifests.
 
-**Verified**: this exact `scripts/deploy.sh` flow was run end-to-end against a real local `kind`
-cluster during development — migration Job completed, all 3 Deployment pods became ready, and the
-full reward pipeline (code → intent → signup-match → recharge-webhook) was exercised through the
-Service and confirmed correct, including traffic actually being distributed across all 3 pods.
+**Verified**: this `scripts/deploy.sh` flow (ordering: config → migration Job → Deployment) was run
+end-to-end against a real local `kind` cluster during development — migration Job completed, all 3
+Deployment pods became ready, and the full reward pipeline (code → intent → signup-match →
+recharge-webhook) was exercised through the Service and confirmed correct, including traffic
+actually being distributed across all 3 pods. That run predates the tier split and used the
+single-namespace manifest set this repo no longer has; the per-tier manifests in `k8s/tier-1000/`
+and `k8s/tier-500/` are the same files with only the namespace and coin ConfigMap values changed,
+and the tier reward amounts themselves were verified via Docker Compose (see above).
 
 ## Superseded
 

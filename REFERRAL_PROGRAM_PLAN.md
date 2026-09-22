@@ -39,6 +39,15 @@ Two design changes made during the build, not in the original plan below:
    - `login_logs` — first-seen visit only, one row per user ever (migration `0002`).
    - `referral_logs` — append-only, every phone number a referrer ever submitted (migration `0003`).
    - `message_copy_logs` — one row per "Copy message" tap, for a per-user click count (migration `0003`).
+4. The flat "50 coins" reward described below (§1, §2, §9) was replaced with two fully separate
+   deployments of the same codebase — one crediting 1000 coins per side, one crediting 500 — with
+   **no default/un-tiered deployment left**. `SIGNUP_BONUS_COINS`/`RECHARGE_BONUS_COINS` have no
+   default value in `eaze-referral-service/app/config.py`, so a deployment that forgets to set them
+   fails at startup rather than silently running as some other amount. See "Reward tiers" in
+   `eaze-referral-service/README.md` for the two Docker Compose stacks and Kubernetes namespaces,
+   and `eaze-referral-app/README.md` for the matching frontend env files. Every occurrence of
+   "50 coins" in the flow description and user journeys below is illustrative of the original
+   single-amount design, not the current numbers.
 
 ## Assumptions (flag if wrong — they change the schema)
 - Eaze auth is phone number + OTP (recharge apps almost always are). Phone number is treated as the canonical identity anchor.

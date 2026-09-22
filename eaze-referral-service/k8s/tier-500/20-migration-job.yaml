@@ -10,7 +10,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: eaze-referral-migrate
-  namespace: eaze-referral
+  namespace: eaze-referral-500
 spec:
   backoffLimit: 2
   ttlSecondsAfterFinished: 3600
