@@ -6,6 +6,7 @@ import { useFonts, Fraunces_600SemiBold } from '@expo-google-fonts/fraunces';
 import {
   PlusJakartaSans_400Regular,
   PlusJakartaSans_700Bold,
+  PlusJakartaSans_700Bold_Italic,
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { colors } from './src/theme';
 import { ReferralScreen } from './src/app/ReferralScreen';
@@ -15,6 +16,10 @@ export default function App() {
     Fraunces_600SemiBold,
     PlusJakartaSans_400Regular,
     PlusJakartaSans_700Bold,
+    // The invite message card's bold-italic style (CopyableMessageCard.tsx) needs its own font
+    // file — RN doesn't reliably synthesize italic/bold slanting for a custom static font on
+    // native the way a browser would for CSS font-style/font-weight on an unmatched file.
+    PlusJakartaSans_700Bold_Italic,
   });
 
   if (!fontsLoaded) {

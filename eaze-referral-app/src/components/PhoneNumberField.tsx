@@ -9,18 +9,21 @@ type Props = {
   onChangeValue: (local: string) => void;
   onValidityChange?: (valid: boolean) => void;
   showErrorWhenEmpty?: boolean; // set true after a submit attempt, to surface "required"
+  required?: boolean; // only the first field is a hard requirement — see ReferralScreen
   rightAccessory?: React.ReactNode; // e.g. a "Remove" text button, inline with the label
   testID?: string;
 };
 
 // Input field with a fixed +91 prefix — Eaze_design_handbook.md §1.6 "An input field",
-// prefix-chip variant. Mandatory: an empty or malformed number shows the Error ramp.
+// prefix-chip variant. An empty *required* field or any malformed number shows the Error ramp;
+// an empty *optional* field is fine left blank — it's just not submitted.
 export function PhoneNumberField({
   label,
   value,
   onChangeValue,
   onValidityChange,
   showErrorWhenEmpty,
+  required = false,
   rightAccessory,
   testID,
 }: Props) {
@@ -28,8 +31,10 @@ export function PhoneNumberField({
 
   const isEmpty = value.length === 0;
   const isComplete = value.length === 10;
-  const isValid = isComplete && isValidIndianMobileLocal(value);
-  const showError = (touched || showErrorWhenEmpty) && (isEmpty || (isComplete && !isValid));
+  const isCorrectFormat = isComplete && isValidIndianMobileLocal(value);
+  // An optional field left untouched is not an error — nothing to submit, nothing wrong.
+  const isValid = required ? isCorrectFormat : isEmpty || isCorrectFormat;
+  const showError = (touched || showErrorWhenEmpty) && ((isEmpty && required) || (isComplete && !isCorrectFormat));
 
   React.useEffect(() => {
     onValidityChange?.(isValid);
@@ -39,7 +44,10 @@ export function PhoneNumberField({
   return (
     <View style={styles.wrapper}>
       <View style={styles.labelRow}>
-        <Text style={styles.label}>{label}</Text>
+        <Text style={styles.label}>
+          {label}
+          {required && <Text style={styles.required}> *</Text>}
+        </Text>
         {rightAccessory}
       </View>
       <View style={[styles.inputRow, showError && styles.inputRowError]}>
@@ -81,6 +89,9 @@ const styles = StyleSheet.create({
   label: {
     ...type.label2,
     color: white[80],
+  },
+  required: {
+    color: colors.error[500],
   },
   inputRow: {
     height: 48,

@@ -12,6 +12,10 @@ export const fontFamily = {
   headline: 'Fraunces_600SemiBold',
   bodyRegular: 'PlusJakartaSans_400Regular',
   bodyBold: 'PlusJakartaSans_700Bold',
+  // Only used by the invite message card (CopyableMessageCard.tsx) — a real font file, not a
+  // fontWeight/fontStyle override, since RN needs the actual bold-italic TTF to render either
+  // reliably on native.
+  bodyBoldItalic: 'PlusJakartaSans_700Bold_Italic',
 } as const;
 
 type TypeToken = {

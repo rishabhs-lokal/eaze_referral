@@ -26,7 +26,7 @@ export function PrimaryButton({ label, onPress, disabled, loading }: Props) {
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={colors.base.black100} />
+        <ActivityIndicator color={white[100]} />
       ) : (
         <Text style={styles.label}>{label}</Text>
       )}
@@ -51,6 +51,6 @@ const styles = StyleSheet.create({
   },
   label: {
     ...type.label1P,
-    color: colors.base.black100,
+    color: white[100],
   },
 });
