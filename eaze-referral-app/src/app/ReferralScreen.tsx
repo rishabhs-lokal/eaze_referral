@@ -18,6 +18,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { TextButton } from '../components/TextButton';
 import { Toast } from '../components/Toast';
 import { Popup } from '../components/Popup';
+import { TermsScreen } from '../components/TermsScreen';
 import { referralCopy, popupCopy, buildShareMessage } from '../content/referral';
 import { copyToClipboard } from '../platform/clipboard';
 import { useReferrerId } from '../state/useReferrerId';
@@ -72,6 +73,7 @@ export function ReferralScreen() {
   const [showNeedsNumberPopup, setShowNeedsNumberPopup] = useState(false);
   const [showInvalidNumberPopup, setShowInvalidNumberPopup] = useState(false);
   const [showExitPopup, setShowExitPopup] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
 
   const scrollToPhoneSection = useCallback(() => {
     // The phone section is the first thing under the hero now, so scrolling to the top
@@ -191,6 +193,10 @@ export function ReferralScreen() {
     );
   }
 
+  if (showTerms) {
+    return <TermsScreen onBack={() => setShowTerms(false)} />;
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
       <GradientBackground />
@@ -271,6 +277,10 @@ export function ReferralScreen() {
               onCopy={handleCopy}
             />
           ) : null}
+
+          <View style={styles.termsRow}>
+            <TextButton label={referralCopy.termsButtonLabel} onPress={() => setShowTerms(true)} />
+          </View>
         </View>
       </ScrollView>
 
@@ -408,6 +418,9 @@ const styles = StyleSheet.create({
   },
   phoneFieldsGroup: {
     gap: 12,
+  },
+  termsRow: {
+    alignItems: 'center',
   },
   toastHost: {
     position: 'absolute',

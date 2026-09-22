@@ -33,7 +33,46 @@ export const referralCopy = {
   missingLinkHeadline: 'Open this from the Eaze app',
   missingLinkBody: "This page only works when it's opened through the Refer a friend banner in Eaze.",
   backButtonLabel: 'Go back',
+  termsButtonLabel: 'Terms and Conditions',
+  termsTitle: 'Terms and Conditions',
 };
+
+// Terms and Conditions — same section pattern as eaze-level-up's TERMS_SECTIONS /
+// renderTerms() (numbered title + body pairs rendered into a card), adapted to how this
+// referral program actually behaves: phone-only attribution, signup bonus vs. recharge
+// bonus timing, and the real fraud/duplicate checks in eaze-referral-service, not generic
+// boilerplate. Every claim here matches app/services/referral_service.py's actual logic —
+// update this alongside that file if the mechanics change.
+export const termsSections = [
+  {
+    title: 'Eligibility',
+    body: 'This referral program is available to registered Eaze users. The friend you refer must be a new, unregistered Eaze user — the referral bonus does not apply to a phone number already registered on Eaze. By using this screen, you accept these Terms.',
+  },
+  {
+    title: 'How Referrals Work',
+    body: "You take part by entering your friend's phone number on this screen, which can only be reached through the \"Refer a friend\" banner inside the Eaze app. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. You may not refer your own phone number.",
+  },
+  {
+    title: 'Coin Crediting',
+    body: `The coin amount shown on this screen is credited to your friend the moment they sign up on Eaze using the exact phone number you submitted. Your own coin reward is credited only once your friend completes their first successful recharge on Eaze — signing up alone does not trigger your reward. Each reward is credited once per referral; retried or duplicate requests will not result in double crediting.`,
+  },
+  {
+    title: 'Verification',
+    body: 'eaze may review a referral, a signup, or a recharge before crediting coins, particularly where activity appears unusual or automated. eaze may delay, decline, or reverse a coin credit pending this review. Decisions made under this section are final.',
+  },
+  {
+    title: 'Fair Play',
+    body: 'Referring your own number, submitting numbers you do not have a genuine relationship to, using multiple or automated accounts, or attempting to trigger a reward without a genuine signup or recharge is not permitted. Any such attempt may result in the referral being voided and any credited coins being reversed.',
+  },
+  {
+    title: 'Program Changes',
+    body: 'eaze reserves the right to modify, pause, or end this referral program, adjust the reward amount, or expire a pending referral at any time, with or without notice.',
+  },
+  {
+    title: 'Limitation of Liability',
+    body: "eaze is not liable for delays or failures in crediting coins caused by technical issues, third-party payment systems, or other causes beyond eaze's reasonable control.",
+  },
+];
 
 // Copy for the three popups — Popup.tsx, wired from ReferralScreen.tsx.
 export const popupCopy = {
