@@ -179,6 +179,7 @@ async def signup_match(session: AsyncSession, phone_e164: str, settings: Setting
                 referred_user_id=new_user.id,
                 referred_phone_e164=phone_e164,
                 referral_intent_id=intent.id,
+                signup_rewarded_at=func.now(),
             )
             .on_conflict_do_nothing(index_elements=["referred_user_id"])
             .returning(Referral.__table__.c.id)
