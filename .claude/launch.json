@@ -8,7 +8,8 @@
         "-c",
         "cd \"eaze-referral-app\" && CI=1 NODE_EXTRA_CA_CERTS=/etc/ssl/cert.pem npx expo start --web --port 8081"
       ],
-      "port": 8081
+      "port": 8081,
+      "autoPort": false
     }
   ]
 }
