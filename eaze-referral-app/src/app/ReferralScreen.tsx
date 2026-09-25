@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, white, spacing, type } from '../theme';
+import { colors, white, spacing, type, fontFamily } from '../theme';
 import { EazeLogo } from '../components/EazeLogo';
 import { GradientBackground } from '../components/GradientBackground';
 import { CopyableMessageCard } from '../components/CopyableMessageCard';
@@ -253,6 +253,8 @@ export function ReferralScreen() {
               ))}
             </View>
 
+            <Text style={styles.phoneDisclaimer}>{referralCopy.phoneDisclaimer}</Text>
+
             {fields.length < referralCopy.maxPhoneFields && (
               <TextButton label={referralCopy.addAnotherNumber} onPress={addField} />
             )}
@@ -418,6 +420,12 @@ const styles = StyleSheet.create({
   },
   phoneFieldsGroup: {
     gap: 12,
+  },
+  phoneDisclaimer: {
+    ...type.body4,
+    fontFamily: fontFamily.bodyItalic,
+    color: white[50],
+    marginTop: -4,
   },
   termsRow: {
     alignItems: 'center',

@@ -16,6 +16,10 @@ export const fontFamily = {
   // fontWeight/fontStyle override, since RN needs the actual bold-italic TTF to render either
   // reliably on native.
   bodyBoldItalic: 'PlusJakartaSans_700Bold_Italic',
+  // Regular-weight italic — the phone-field legal disclaimer (ReferralScreen.tsx). Same reason
+  // as bodyBoldItalic above: a real italic TTF, not a synthesized fontStyle:'italic' on the
+  // upright Regular file.
+  bodyItalic: 'PlusJakartaSans_400Regular_Italic',
 } as const;
 
 type TypeToken = {

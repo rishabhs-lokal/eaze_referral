@@ -35,42 +35,54 @@ export const referralCopy = {
   backButtonLabel: 'Go back',
   termsButtonLabel: 'Terms and Conditions',
   termsTitle: 'Terms and Conditions',
+  phoneDisclaimer:
+    "Note: a phone number already referred by another user cannot be claimed again and will not be rewarded. By submitting a number, you acknowledge and accept the Terms and Conditions governing this referral program.",
 };
 
 // Terms and Conditions — same section pattern as eaze-level-up's TERMS_SECTIONS /
-// renderTerms() (numbered title + body pairs rendered into a card), adapted to how this
-// referral program actually behaves: phone-only attribution, signup bonus vs. recharge
-// bonus timing, and the real fraud/duplicate checks in eaze-referral-service, not generic
-// boilerplate. Every claim here matches app/services/referral_service.py's actual logic —
-// update this alongside that file if the mechanics change.
+// renderTerms() (numbered title + body pairs rendered into a card). This is the actual
+// legal text supplied for the program, not paraphrased copy — do not reword without
+// updating the source document. `links` on a section is an optional map of inline
+// citations; TermsScreen.tsx splits the body on `{{key}}` tokens and renders each as a
+// tappable link via Linking.openURL.
+export const termsDocumentTitle = 'Terms & Conditions – User Referral Program';
+
 export const termsSections = [
   {
-    title: 'Eligibility',
-    body: 'This referral program is available to registered Eaze users. The friend you refer must be a new, unregistered Eaze user — the referral bonus does not apply to a phone number already registered on Eaze. By using this screen, you accept these Terms.',
+    title: 'Program Overview & Eligibility',
+    body: 'This User Referral Program allows a registered Eaze App user to refer a new, unregistered Eaze App user, with both users receiving coins once the applicable conditions below are met. The referral bonus does not apply to a phone number already registered on Eaze App. By accessing the referral page linked from the Eaze App (the "Referral Page"), you accept these Terms, read together with Eaze App’s {{terms}} and {{privacy}}.',
+    links: {
+      terms: { label: 'Terms & Conditions', url: 'https://www.eazeapp.com/terms' },
+      privacy: { label: 'Privacy Policy', url: 'https://www.eazeapp.com/privacypolicy' },
+    },
   },
   {
     title: 'How Referrals Work',
-    body: "You take part by entering your friend's phone number on this screen, which can only be reached through the \"Refer a friend\" banner inside the Eaze app. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. You may not refer your own phone number.",
-  },
-  {
-    title: 'Coin Crediting',
-    body: `The coin amount shown on this screen is credited to your friend the moment they sign up on Eaze using the exact phone number you submitted. Your own coin reward is credited only once your friend completes their first successful recharge on Eaze — signing up alone does not trigger your reward. Each reward is credited once per referral; retried or duplicate requests will not result in double crediting.`,
+    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. You may not refer your own phone number. By submitting a friend’s phone number, you confirm that you have their permission to share it with Eaze App for the purpose of this referral program.',
   },
   {
     title: 'Verification',
-    body: 'eaze may review a referral, a signup, or a recharge before crediting coins, particularly where activity appears unusual or automated. eaze may delay, decline, or reverse a coin credit pending this review. Decisions made under this section are final.',
+    body: 'Eaze App may review a referral, a signup, or a recharge before crediting coins, particularly where activity appears unusual or automated. Eaze App may delay, decline, or reverse a coin credit pending this review. Decisions made under this section are final, subject to Eaze’s standard grievance redressal process.',
+  },
+  {
+    title: 'Coin Crediting',
+    body: 'The coin amount shown on the Referral Page is credited to your friend the moment they sign up on Eaze App using the exact phone number you submitted. Your own coin reward is credited only once your friend completes their first successful recharge on Eaze App — signing up alone does not trigger your reward. Each reward is credited once per referral; retried or duplicate requests will not result in double crediting.',
   },
   {
     title: 'Fair Play',
-    body: 'Referring your own number, submitting numbers you do not have a genuine relationship to, using multiple or automated accounts, or attempting to trigger a reward without a genuine signup or recharge is not permitted. Any such attempt may result in the referral being voided and any credited coins being reversed.',
+    body: 'Referring your own number, submitting a number without such person’s permission, using multiple or automated accounts, or attempting to trigger a reward without a genuine signup or recharge constitutes unfair practice. Eaze App may void the referral, reverse any credited coins, and take further action including temporary suspension or permanent blocking of your Eaze App account.',
   },
   {
     title: 'Program Changes',
-    body: 'eaze reserves the right to modify, pause, or end this referral program, adjust the reward amount, or expire a pending referral at any time, with or without notice.',
+    body: 'Eaze App reserves the right to modify, pause, or end this referral program, adjust the reward amount, or expire a pending referral at any time, with or without notice. Any such change will apply prospectively and will not affect coins already credited or referrals already completed at the time of the change.',
   },
   {
     title: 'Limitation of Liability',
-    body: "eaze is not liable for delays or failures in crediting coins caused by technical issues, third-party payment systems, or other causes beyond eaze's reasonable control.",
+    body: 'Eaze App is not liable for delays or failures in crediting coins caused by technical issues, third-party payment systems, or other causes beyond Eaze App’s reasonable control.',
+  },
+  {
+    title: 'Governing Law',
+    body: 'These Terms are governed by the laws of India, and courts in Bengaluru shall have exclusive jurisdiction over any dispute arising out of or in connection with this program.',
   },
 ];
 

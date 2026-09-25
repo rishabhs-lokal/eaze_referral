@@ -118,16 +118,31 @@ async def get_or_create_referral_code(session: AsyncSession, user: User) -> str:
 async def submit_intents(
     session: AsyncSession, referrer: User, phone_numbers: list[str]
 ) -> tuple[int, list[dict]]:
+    """A number is only ever accepted into referral_intents when it doesn't already exist
+    there (enforced below AND by the table's own UNIQUE constraint as a second line of
+    defense — see referral_intents_phone_e164_key) and isn't already a registered Eaze user
+    — the referral bonus never applies to someone already on Eaze (see the Eligibility
+    section of the Terms), so accepting that number here would create a referral that can
+    never be rewarded."""
     saved = 0
     skipped: list[dict] = []
 
     async with transaction(session):
+        valid_phones = [p for p in phone_numbers if is_valid_indian_e164(p)]
+        registered_result = await session.execute(
+            select(User.phone_e164).where(User.phone_e164.in_(valid_phones))
+        )
+        already_registered_phones = {row[0] for row in registered_result.all()}
+
         for phone in phone_numbers:
             if not is_valid_indian_e164(phone):
                 skipped.append({"phone": phone, "reason": "invalid_format"})
                 continue
             if phone == referrer.phone_e164:
                 skipped.append({"phone": phone, "reason": "self_referral"})
+                continue
+            if phone in already_registered_phones:
+                skipped.append({"phone": phone, "reason": "already_registered"})
                 continue
 
             stmt = (

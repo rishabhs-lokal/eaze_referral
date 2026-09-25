@@ -1,9 +1,9 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { white, spacing, type } from '../theme';
+import { colors, white, spacing, type } from '../theme';
 import { GradientBackground } from './GradientBackground';
-import { referralCopy, termsSections } from '../content/referral';
+import { referralCopy, termsDocumentTitle, termsSections } from '../content/referral';
 
 type Props = {
   onBack: () => void;
@@ -14,6 +14,29 @@ type Props = {
 // card using that app's own card-fill tone (primary-500 at low opacity) rather than this app's
 // usual neutral white-10 surface — the one deliberate borrow from that screen's visual language.
 const CARD_FILL = 'rgba(255,158,68,0.14)'; // eaze-level-up's --card-fill
+
+type TermsLink = { label: string; url: string };
+
+// A section body may embed `{{key}}` tokens (see content/referral.ts's Program Overview &
+// Eligibility section) that resolve against that section's own `links` map. Splits the plain
+// string on those tokens and renders the rest as ordinary text, with each token replaced by a
+// tappable inline Text — RN allows nested Text nodes to wrap inline within a parent paragraph,
+// so this reads as one continuous sentence, not a separate block.
+function renderSectionBody(body: string, links?: Record<string, TermsLink>) {
+  if (!links) return body;
+  const parts = body.split(/(\{\{\w+\}\})/g);
+  return parts.map((part, i) => {
+    const match = part.match(/^\{\{(\w+)\}\}$/);
+    if (!match) return part;
+    const link = links[match[1]];
+    if (!link) return part;
+    return (
+      <Text key={i} style={styles.link} onPress={() => Linking.openURL(link.url)}>
+        {link.label}
+      </Text>
+    );
+  });
+}
 
 export function TermsScreen({ onBack }: Props) {
   return (
@@ -36,12 +59,15 @@ export function TermsScreen({ onBack }: Props) {
       </View>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.card}>
+          <Text style={styles.documentTitle}>{termsDocumentTitle}</Text>
           {termsSections.map((section, index) => (
             <View key={section.title} style={styles.section}>
               <Text style={styles.sectionHeading}>
                 {index + 1}. {section.title}
               </Text>
-              <Text style={styles.sectionBody}>{section.body}</Text>
+              <Text style={styles.sectionBody}>
+                {renderSectionBody(section.body, (section as { links?: Record<string, TermsLink> }).links)}
+              </Text>
             </View>
           ))}
         </View>
@@ -98,6 +124,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: white[40],
   },
+  documentTitle: {
+    ...type.title2,
+    color: white[100],
+  },
   section: {
     gap: 6,
   },
@@ -109,5 +139,9 @@ const styles = StyleSheet.create({
     ...type.body2,
     color: white[80],
     lineHeight: 21,
+  },
+  link: {
+    color: colors.primary[500],
+    textDecorationLine: 'underline',
   },
 });
