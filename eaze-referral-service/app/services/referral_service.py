@@ -25,7 +25,7 @@ from app.models import (
 )
 from app.services.codes import generate_referral_code
 from app.services.db_helpers import transaction
-from app.services.phone import is_valid_indian_e164
+from app.services.phone import is_likely_fake, is_valid_indian_e164
 
 logger = logging.getLogger("eaze_referral.service")
 
@@ -143,6 +143,9 @@ async def submit_intents(
                 continue
             if phone in already_registered_phones:
                 skipped.append({"phone": phone, "reason": "already_registered"})
+                continue
+            if is_likely_fake(phone):
+                skipped.append({"phone": phone, "reason": "likely_fake"})
                 continue
 
             stmt = (

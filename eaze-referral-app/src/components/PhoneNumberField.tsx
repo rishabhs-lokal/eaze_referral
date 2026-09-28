@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, white, radius, type } from '../theme';
-import { isValidIndianMobileLocal, sanitizeLocalDigits } from '../state/phoneValidation';
+import {
+  isLikelyFakeIndianMobileLocal,
+  isValidIndianMobileLocal,
+  sanitizeLocalDigits,
+} from '../state/phoneValidation';
 
 type Props = {
   label: string;
@@ -31,7 +35,9 @@ export function PhoneNumberField({
 
   const isEmpty = value.length === 0;
   const isComplete = value.length === 10;
-  const isCorrectFormat = isComplete && isValidIndianMobileLocal(value);
+  const isFormatValid = isComplete && isValidIndianMobileLocal(value);
+  const isFake = isFormatValid && isLikelyFakeIndianMobileLocal(value);
+  const isCorrectFormat = isFormatValid && !isFake;
   // An optional field left untouched is not an error — nothing to submit, nothing wrong.
   const isValid = required ? isCorrectFormat : isEmpty || isCorrectFormat;
   const showError = (touched || showErrorWhenEmpty) && ((isEmpty && required) || (isComplete && !isCorrectFormat));
@@ -70,7 +76,11 @@ export function PhoneNumberField({
       </View>
       {showError && (
         <Text style={styles.errorText}>
-          {isEmpty ? 'Phone number is required' : 'Enter a valid 10-digit Indian mobile number'}
+          {isEmpty
+            ? 'Phone number is required'
+            : isFake
+              ? "Enter your friend's real number, not a placeholder"
+              : 'Enter a valid 10-digit Indian mobile number'}
         </Text>
       )}
     </View>

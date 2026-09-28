@@ -58,6 +58,11 @@ services:
       APP_STORE_URL: https://apps.apple.com/app/idXXXXXXXXX
       FALLBACK_URL: https://play.google.com/store/apps/details?id=com.eaze.app
       LOG_LEVEL: info
+      # Pulled from a local, gitignored .env next to this file via Compose's own variable
+      # substitution — never hardcoded here, since GOOGLE_SHEETS_WEBHOOK_SECRET is a real
+      # credential. Empty defaults keep this file usable even without that .env present.
+      GOOGLE_SHEETS_WEBHOOK_URL: ${GOOGLE_SHEETS_WEBHOOK_URL:-}
+      GOOGLE_SHEETS_WEBHOOK_SECRET: ${GOOGLE_SHEETS_WEBHOOK_SECRET:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
