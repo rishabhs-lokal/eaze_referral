@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     signup_bonus_coins: int
     recharge_bonus_coins: int
 
+    # Optional mirror of every accepted referral into a Google Sheet, via an Apps Script Web
+    # App endpoint — see google-apps-script/referral_sheet_webhook.gs for the script and its
+    # deployment steps. Unset (the default) means the feature is entirely off: submit_intents
+    # behaves exactly as it did before this existed.
+    google_sheets_webhook_url: str | None = None
+    google_sheets_webhook_secret: str | None = None
+
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"
     app_store_url: str = "https://apps.apple.com/app/idXXXXXXXXX"

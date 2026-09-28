@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -19,6 +19,7 @@ from app.schemas import (
 from app.services import referral_service
 from app.services.identity import decode_user_id
 from app.services.phone import is_valid_indian_e164
+from app.services.sheets_webhook import notify_google_sheet
 
 router = APIRouter(prefix="/api/referral", tags=["referral"])
 
@@ -46,12 +47,23 @@ async def get_referral_code(user_id: str, session: AsyncSession = Depends(get_db
 
 @router.post("/intents", response_model=SubmitIntentsResponse)
 async def submit_intents(
-    body: SubmitIntentsRequest, session: AsyncSession = Depends(get_db)
+    body: SubmitIntentsRequest, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_db)
 ) -> SubmitIntentsResponse:
     decoded_id = _decode_or_400(body.referrer_user_id)
     referrer = await referral_service.get_or_create_user_by_external_ref(session, decoded_id)
     await referral_service.record_referral_log(session, decoded_id, body.phone_numbers_e164)
     saved, skipped = await referral_service.submit_intents(session, referrer, body.phone_numbers_e164)
+
+    # Mirror only the phone numbers actually accepted as new referrals — not every raw
+    # submission (that's what referral_logs is for) — into the Google Sheet, one row per number,
+    # keyed on the referrer's decoded id. Scheduled as a background task so an external Apps
+    # Script call can never add latency to this response.
+    skipped_phones = {s["phone"] for s in skipped}
+    settings = get_settings()
+    for phone in body.phone_numbers_e164:
+        if phone not in skipped_phones:
+            background_tasks.add_task(notify_google_sheet, decoded_id, phone, settings)
+
     return SubmitIntentsResponse(saved=saved, skipped=[SkippedPhone(**s) for s in skipped])
 
 

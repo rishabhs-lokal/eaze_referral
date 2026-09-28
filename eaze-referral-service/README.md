@@ -118,6 +118,27 @@ purely so nothing a user submitted is ever lost from the record, even numbers th
 user copied the message" is `COUNT(*) GROUP BY user_id`; individual click timestamps are kept
 rather than collapsed into a running counter.
 
+### Google Sheet mirror (optional)
+
+Every phone number that's actually **accepted** as a new referral (not every raw submission —
+that's what `referral_logs` above is for) can be mirrored, fire-and-forget, into a Google Sheet:
+one row per accepted referral, `[timestamp, referrer's decoded user_id, phone number]`. This is
+a human-readable supplementary view — `referral_intents` in Postgres remains the actual source
+of truth for the reward pipeline; nothing about the reward logic depends on this working.
+
+Off by default (`GOOGLE_SHEETS_WEBHOOK_URL` unset). To turn it on:
+
+1. Create a Google Sheet, then Extensions → Apps Script, and paste in the contents of
+   `google-apps-script/referral_sheet_webhook.gs` (full deployment steps are in that file's
+   header comment — script property for the shared secret, `setupSheet` run-once, deploy as a
+   Web App).
+2. Set `GOOGLE_SHEETS_WEBHOOK_URL` (the Web App URL from step 1) and, if you configured one,
+   `GOOGLE_SHEETS_WEBHOOK_SECRET` on the backend — see `.env.tier-*.example`.
+
+A failure here (network, misconfigured URL, wrong secret) only ever logs a warning — it can
+never fail or slow down the actual `/api/referral/intents` request, since it runs as a FastAPI
+`BackgroundTask` after the response is already being sent.
+
 ## Reward tiers (1000 vs 500 coins)
 
 Two coin amounts are deployed side by side — same codebase, same image, nothing forked. **There
