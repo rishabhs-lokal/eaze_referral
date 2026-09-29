@@ -65,6 +65,8 @@ beyond pointing `EXPO_PUBLIC_API_BASE_URL` at this service.
 | POST | `/api/referral/signup-match` | Called at signup — phone-only attribution (see below), credits the new user `SIGNUP_BONUS_COINS` if matched |
 | POST | `/api/referral/recharge-webhook` | Credits the referrer `RECHARGE_BONUS_COINS` on the referred user's first successful recharge |
 | GET | `/api/referral/admin/funnel` | Status-count visibility into the pipeline |
+| GET | `/api/referral/admin/verification-summary` | Confirmed funnel: referred → signed up → paid → referrer actually paid out |
+| POST | `/api/referral/admin/reconcile` | Verify pending referrals against real payment data and credit any referrer now confirmed owed — see below |
 | GET | `/r/:code` | The link in the copyable share message — logs a click, then redirects to the Play Store or App Store by user agent |
 
 Attribution is **phone-only** — no code/deep-link fallback. A referral relationship exists if and
@@ -138,6 +140,94 @@ Off by default (`GOOGLE_SHEETS_WEBHOOK_URL` unset). To turn it on:
 A failure here (network, misconfigured URL, wrong secret) only ever logs a warning — it can
 never fail or slow down the actual `/api/referral/intents` request, since it runs as a FastAPI
 `BackgroundTask` after the response is already being sent.
+
+### Payment verification via Redash (optional)
+
+The referrer's coins are only earned when the person they referred **actually pays**. The
+recharge webhook is the normal trigger for that, but a webhook is a claim, not evidence — it can
+also simply never arrive. This feature adds independent confirmation against Eaze's real
+warehouse data before any referrer is paid, and a reconciler that catches payments the webhook
+missed.
+
+Everything it learns lands in one table, `referral_verifications` — one row per referred phone
+number, opened the moment the referral is accepted and only ever advanced afterwards:
+
+| Column group | Answers |
+|---|---|
+| `signup_status`, `eaze_user_id`, `signed_up_at` | Did this number actually register on Eaze? |
+| `payment_status`, `first_payment_at`, `first_payment_amount_paise`, `successful_payment_count` | Did they actually pay? |
+| `signup_coins_status` / `_amount` / `_credited_at` | Did the *friend* get their coins? |
+| `referrer_coins_status` / `_amount` / `_credited_at` | Did the *referrer* get theirs? |
+| `source`, `last_checked_at`, `check_count`, `last_error` | Which path last advanced this row, and why it might be stuck |
+
+Because a row exists from referral time, the table can answer what `referrals` structurally
+cannot: which referred numbers never signed up, and which signed up but never paid.
+
+The operationally important query is "who has earned a reward they haven't received":
+
+```sql
+SELECT phone_e164, referrer_external_id, first_payment_at, last_error
+FROM referral_verifications
+WHERE payment_status = 'PAID' AND referrer_coins_status = 'PENDING';
+```
+
+Off by default (`REDASH_BASE_URL` unset) — the pipeline then behaves exactly as it did before,
+running on the recharge webhook alone. To turn it on you need **two Redash queries**:
+
+**Query 1 — phone → Eaze user id.** Parameter: `mobile_numbers` (the service sends a
+comma-separated list). Must return columns `user_id` and `mobile_no`; `registered_at` optional.
+
+```sql
+-- Proves the referred number is a real registered Eaze user.
+SELECT u.id AS user_id, u.phone AS mobile_no, u.created_at AS registered_at
+FROM users u
+WHERE REGEXP_REPLACE(u.phone, r'^(\+?91)', '') IN (
+  SELECT REGEXP_REPLACE(TRIM(num), r'^(\+?91)', '')
+  FROM UNNEST(SPLIT('{{ mobile_numbers }}', ',')) AS num
+)
+```
+
+**Query 2 — Eaze user id → payment facts.** Parameter: `user_ids` (comma-separated). Must return
+`user_id` and `successful_payment_count`; `first_payment_at` and `first_payment_amount_paise`
+optional but recommended (they're stored for reporting).
+
+```sql
+-- Proves they actually paid. Only successful payments count.
+SELECT p.user_id,
+       COUNT(*)              AS successful_payment_count,
+       MIN(p.created_at)     AS first_payment_at,
+       MIN(p.amount_paise)   AS first_payment_amount_paise
+FROM payments p
+WHERE p.status = 'SUCCESS'
+  AND CAST(p.user_id AS STRING) IN (UNNEST(SPLIT('{{ user_ids }}', ',')))
+GROUP BY p.user_id
+```
+
+Adjust table/column names to the real warehouse schema — the contract this service depends on is
+only the **returned column names** above, not where they come from.
+
+Then set `REDASH_BASE_URL`, `REDASH_API_KEY`, `REDASH_VERIFY_PHONE_QUERY_ID` and
+`REDASH_PAYMENTS_QUERY_ID` (see `.env.tier-*.example`) and run a pass:
+
+```bash
+curl -X POST http://localhost:8091/api/referral/admin/reconcile
+curl     http://localhost:8091/api/referral/admin/verification-summary
+```
+
+Schedule `/admin/reconcile` on a timer (a Kubernetes `CronJob` hitting the endpoint, every
+15–30 min is plenty) so missed payments are picked up without anyone asking.
+
+Three guarantees worth knowing, all verified against a mock Redash before this shipped:
+
+- **Never double-credits.** Crediting goes through the same `wallet_transactions`
+  `UNIQUE(user_id, type, reference_id)` guard as the webhook path, so the webhook and the
+  reconciler can both fire for the same referral and the referrer is still paid exactly once.
+- **A Redash outage never reads as "they didn't pay."** The error is parked on the affected rows
+  in `last_error` and retried next pass; no status is changed. Withholding an earned reward
+  because a dashboard was down would be the worst failure mode here.
+- **It only ever advances a row.** A signup already confirmed by our own pipeline is never
+  downgraded, and coins already credited are never revoked — a reversal is a deliberate
+  decision, not something a background sweep should make.
 
 ## Reward tiers (1000 vs 500 coins)
 

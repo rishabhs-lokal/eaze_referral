@@ -9,14 +9,16 @@ from app.schemas import (
     MessageCopyLogResponse,
     RechargeWebhookRequest,
     RechargeWebhookResponse,
+    ReconcileResponse,
     ReferralCodeResponse,
     SignupMatchRequest,
     SignupMatchResponse,
     SkippedPhone,
     SubmitIntentsRequest,
     SubmitIntentsResponse,
+    VerificationSummaryResponse,
 )
-from app.services import referral_service
+from app.services import referral_service, verification
 from app.services.identity import decode_user_id
 from app.services.phone import is_valid_indian_e164
 from app.services.sheets_webhook import notify_google_sheet
@@ -103,3 +105,23 @@ async def recharge_webhook(
 async def admin_funnel(session: AsyncSession = Depends(get_db)) -> FunnelResponse:
     result = await referral_service.admin_funnel(session)
     return FunnelResponse(**result)
+
+
+@router.get("/admin/verification-summary", response_model=VerificationSummaryResponse)
+async def admin_verification_summary(
+    session: AsyncSession = Depends(get_db),
+) -> VerificationSummaryResponse:
+    result = await verification.verification_summary(session)
+    return VerificationSummaryResponse(**result)
+
+
+@router.post("/admin/reconcile", response_model=ReconcileResponse)
+async def admin_reconcile(
+    limit: int | None = None, session: AsyncSession = Depends(get_db)
+) -> ReconcileResponse:
+    """Run one payment-verification pass against Redash and credit any referrer whose referred
+    person is now confirmed to have paid. Idempotent — running it twice never double-credits —
+    so it is safe to call from a CronJob, or by hand while investigating a specific referral."""
+    settings = get_settings()
+    result = await verification.reconcile(session, settings, limit=limit)
+    return ReconcileResponse(**result)

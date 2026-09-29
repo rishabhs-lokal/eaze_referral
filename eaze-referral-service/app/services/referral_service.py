@@ -20,6 +20,7 @@ from app.models import (
     ReferralCode,
     ReferralIntent,
     ReferralLog,
+    ReferralVerification,
     User,
     WalletTransaction,
 )
@@ -152,12 +153,29 @@ async def submit_intents(
                 pg_insert(ReferralIntent.__table__)
                 .values(referrer_user_id=referrer.id, phone_e164=phone)
                 .on_conflict_do_nothing(index_elements=["phone_e164"])
+                .returning(ReferralIntent.__table__.c.id)
             )
             result = await session.execute(stmt)
-            if result.rowcount and result.rowcount > 0:
-                saved += 1
-            else:
+            intent_row = result.first()
+            if intent_row is None:
                 skipped.append({"phone": phone, "reason": "already_referred"})
+                continue
+
+            saved += 1
+            # Open the tracking row at the same moment the referral becomes real, in the same
+            # transaction. Starting it here (rather than at signup) is the whole point: a
+            # number that is referred and then never signs up, or signs up and never pays, is
+            # only visible because a row was opened the moment it was referred.
+            await session.execute(
+                pg_insert(ReferralVerification.__table__)
+                .values(
+                    phone_e164=phone,
+                    referrer_external_id=referrer.external_ref,
+                    referrer_user_id=referrer.id,
+                    referral_intent_id=intent_row.id,
+                )
+                .on_conflict_do_nothing(index_elements=["phone_e164"])
+            )
 
     return saved, skipped
 
@@ -228,6 +246,22 @@ async def signup_match(session: AsyncSession, phone_e164: str, settings: Setting
                 .where(User.id == new_user.id)
                 .values(wallet_balance=User.wallet_balance + settings.signup_bonus_coins)
             )
+            # Advance the tracking row: this number has now genuinely registered, and the
+            # referred person's own bonus is paid. The referrer's half stays PENDING — it is
+            # gated on a real payment, which has not happened yet.
+            await session.execute(
+                update(ReferralVerification.__table__)
+                .where(ReferralVerification.phone_e164 == phone_e164)
+                .values(
+                    referral_id=referral_id,
+                    signup_status="SIGNED_UP",
+                    signed_up_at=func.now(),
+                    signup_coins_status="CREDITED",
+                    signup_coins_amount=settings.signup_bonus_coins,
+                    signup_coins_credited_at=func.now(),
+                    updated_at=func.now(),
+                )
+            )
 
         return {
             "user_id": new_user.id,
@@ -267,13 +301,18 @@ async def recharge_webhook(
                 triggering_recharge_id=recharge_id,
                 updated_at=func.now(),
             )
-            .returning(Referral.__table__.c.id, Referral.__table__.c.referrer_user_id)
+            .returning(
+                Referral.__table__.c.id,
+                Referral.__table__.c.referrer_user_id,
+                Referral.__table__.c.referred_phone_e164,
+            )
         )
         referral_row = updated.first()
         if referral_row is None:
             return {"credited": False, "reason": "no_pending_referral", "recharge_id": recharge_id}
 
         referral_id, referrer_user_id = referral_row.id, referral_row.referrer_user_id
+        referred_phone = referral_row.referred_phone_e164
 
         await session.execute(
             pg_insert(WalletTransaction.__table__)
@@ -290,6 +329,22 @@ async def recharge_webhook(
             update(User.__table__)
             .where(User.id == referrer_user_id)
             .values(wallet_balance=User.wallet_balance + settings.recharge_bonus_coins)
+        )
+        # The payment is what earns the referrer their coins, so both facts land on the
+        # tracking row together — a row can never show CREDITED against an unpaid referral.
+        await session.execute(
+            update(ReferralVerification.__table__)
+            .where(ReferralVerification.phone_e164 == referred_phone)
+            .values(
+                payment_status="PAID",
+                first_payment_at=func.now(),
+                first_payment_amount_paise=amount_paise,
+                successful_payment_count=1,
+                referrer_coins_status="CREDITED",
+                referrer_coins_amount=settings.recharge_bonus_coins,
+                referrer_coins_credited_at=func.now(),
+                updated_at=func.now(),
+            )
         )
 
         return {"credited": True, "referrer_user_id": referrer_user_id, "recharge_id": recharge_id}

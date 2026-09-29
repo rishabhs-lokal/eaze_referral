@@ -69,3 +69,28 @@ class FunnelResponse(CamelModel):
     referrals: list[FunnelCount]
     intents: list[FunnelCount]
     total_clicks: int
+
+
+class ReconcileResponse(CamelModel):
+    """Result of one payment-verification pass. `ran=False` with a reason means Redash isn't
+    configured — the feature is off, not broken."""
+
+    ran: bool
+    reason: str | None = None
+    checked: int = 0
+    signups_confirmed: int = 0
+    payments_confirmed: int = 0
+    coins_credited: int = 0
+    error: str | None = None
+
+
+class VerificationSummaryResponse(CamelModel):
+    """The referral funnel as confirmed facts: referred -> signed up -> paid -> paid out.
+    `paid_but_not_credited` is the number that matters operationally — referrals that have
+    earned a reward the referrer hasn't received yet."""
+
+    referred: int
+    signed_up: int
+    paid: int
+    referrer_coins_credited: int
+    paid_but_not_credited: int

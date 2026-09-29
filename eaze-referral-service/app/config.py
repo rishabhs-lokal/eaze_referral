@@ -52,6 +52,23 @@ class Settings(BaseSettings):
     google_sheets_webhook_url: str | None = None
     google_sheets_webhook_secret: str | None = None
 
+    # Payment verification against Eaze's real warehouse data, via Redash — see
+    # app/services/redash.py and the README's "Payment verification via Redash" section.
+    # Unset (the default) means the reconciler is off and the reward pipeline behaves exactly
+    # as it did before: coins follow our own recharge webhook alone. With these set, a
+    # referrer's coins are additionally confirmed against real payment data before crediting.
+    redash_base_url: str | None = None
+    redash_api_key: str | None = None
+    # Query that maps a phone number to Eaze's own user id — proves the referred person really
+    # registered. Parameter: mobile_numbers.
+    redash_verify_phone_query_id: int | None = None
+    # Query that returns payment facts for a given Eaze user id — proves they really paid.
+    # Parameter: user_ids.
+    redash_payments_query_id: int | None = None
+    # How many phone numbers / user ids to pack into one Redash query. Redash parameters are
+    # substituted into SQL, so this bounds the generated statement size.
+    redash_batch_size: int = 200
+
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"
     app_store_url: str = "https://apps.apple.com/app/idXXXXXXXXX"

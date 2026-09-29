@@ -158,6 +158,92 @@ class MessageCopyLog(Base):
     copied_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class ReferralVerification(Base):
+    """One flat row per referred phone number, from the moment it's accepted as a referral
+    through to coins actually landing in both wallets. This is the "did it really happen"
+    ledger: `referral_intents` says a number was claimed and `referrals` only exists once a
+    signup matched, but neither can tell you about a number that was referred and then never
+    signed up, or signed up and never paid. This table can, because a row is created at
+    referral time and only ever advanced afterwards.
+
+    Two independent things advance a row, and the column set is deliberately the same for both
+    so they can be compared:
+      - our own pipeline (signup_match / recharge_webhook), which writes `source='WEBHOOK'`
+      - the Redash reconciler (app/services/verification.py), which independently confirms
+        against Eaze's real user and payment tables and writes `source='REDASH'`
+
+    The referrer's coins are the point of the whole exercise: they are only ever credited once
+    `payment_status='PAID'`, i.e. once the referred person actually paid. A signup alone never
+    moves `referrer_coins_status` off PENDING.
+    """
+
+    __tablename__ = "referral_verifications"
+    __table_args__ = (
+        CheckConstraint(
+            "signup_status IN ('PENDING', 'SIGNED_UP', 'NOT_FOUND')",
+            name="referral_verifications_signup_status",
+        ),
+        CheckConstraint(
+            "payment_status IN ('PENDING', 'PAID', 'NO_PAYMENT')",
+            name="referral_verifications_payment_status",
+        ),
+        CheckConstraint(
+            "signup_coins_status IN ('PENDING', 'CREDITED', 'SKIPPED')",
+            name="referral_verifications_signup_coins_status",
+        ),
+        CheckConstraint(
+            "referrer_coins_status IN ('PENDING', 'CREDITED', 'SKIPPED')",
+            name="referral_verifications_referrer_coins_status",
+        ),
+        # The reconciler's work queue is "rows not yet fully settled" — this is the index that
+        # keeps that scan cheap as the table grows.
+        Index("idx_referral_verifications_pending", "payment_status", "referrer_coins_status"),
+        Index("idx_referral_verifications_referrer", "referrer_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # The referred number — one row per number, matching referral_intents' own uniqueness.
+    phone_e164: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
+    # The referrer as the decoded id from the banner link (same value as referral_logs.user_id),
+    # kept alongside the internal FK so this table is readable without a join.
+    referrer_external_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    referrer_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    referral_intent_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("referral_intents.id"), nullable=True
+    )
+    referral_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("referrals.id"), nullable=True)
+
+    # --- did the referred person actually register on Eaze? ---
+    signup_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")
+    # Eaze's own user id for this number, as resolved by the Redash phone-lookup query. Null until
+    # the reconciler resolves it (or forever, if this number never registers).
+    eaze_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signed_up_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- did they actually pay? this is the gate on the referrer's reward ---
+    payment_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")
+    first_payment_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_payment_amount_paise: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    successful_payment_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    # --- were the coins actually handed out? ---
+    signup_coins_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")
+    signup_coins_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    signup_coins_credited_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    referrer_coins_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")
+    referrer_coins_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referrer_coins_credited_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- reconciler bookkeeping, so a stuck row is diagnosable without reading logs ---
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="WEBHOOK")
+    last_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    check_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class WalletTransaction(Base):
     """Coin ledger. UNIQUE(user_id, type, reference_id) makes every credit idempotent against
     retries — the same reward can never be paid twice."""
