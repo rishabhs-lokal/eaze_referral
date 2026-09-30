@@ -1,6 +1,30 @@
 from functools import lru_cache
+from typing import Annotated, Any
 
+from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _blank_to_none(value: Any) -> Any:
+    """Treat an empty/whitespace env var as absent.
+
+    Docker Compose's `${VAR:-}` substitution passes an EMPTY STRING when the variable isn't set,
+    not nothing at all — so an optional setting declared in a compose file but left unconfigured
+    arrives as "". Without this, `int | None` fields reject "" outright and the app refuses to
+    start, which is exactly backwards: these settings are optional, and not setting them is the
+    normal case. Applies to the k8s manifests too, where an unset ConfigMap value behaves the
+    same way.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+# Optional settings whose absence is normal and must not be a startup error. Deliberately NOT
+# used for signup_bonus_coins/recharge_bonus_coins — those have no default on purpose, so a
+# deployment that forgets them fails loudly rather than paying out some unintended amount.
+OptionalStr = Annotated[str | None, BeforeValidator(_blank_to_none)]
+OptionalInt = Annotated[int | None, BeforeValidator(_blank_to_none)]
 
 
 class Settings(BaseSettings):
@@ -49,22 +73,22 @@ class Settings(BaseSettings):
     # App endpoint — see google-apps-script/referral_sheet_webhook.gs for the script and its
     # deployment steps. Unset (the default) means the feature is entirely off: submit_intents
     # behaves exactly as it did before this existed.
-    google_sheets_webhook_url: str | None = None
-    google_sheets_webhook_secret: str | None = None
+    google_sheets_webhook_url: OptionalStr = None
+    google_sheets_webhook_secret: OptionalStr = None
 
     # Payment verification against Eaze's real warehouse data, via Redash — see
     # app/services/redash.py and the README's "Payment verification via Redash" section.
     # Unset (the default) means the reconciler is off and the reward pipeline behaves exactly
     # as it did before: coins follow our own recharge webhook alone. With these set, a
     # referrer's coins are additionally confirmed against real payment data before crediting.
-    redash_base_url: str | None = None
-    redash_api_key: str | None = None
+    redash_base_url: OptionalStr = None
+    redash_api_key: OptionalStr = None
     # Query that maps a phone number to Eaze's own user id — proves the referred person really
     # registered. Parameter: mobile_numbers.
-    redash_verify_phone_query_id: int | None = None
+    redash_verify_phone_query_id: OptionalInt = None
     # Query that returns payment facts for a given Eaze user id — proves they really paid.
     # Parameter: user_ids.
-    redash_payments_query_id: int | None = None
+    redash_payments_query_id: OptionalInt = None
     # How many phone numbers / user ids to pack into one Redash query. Redash parameters are
     # substituted into SQL, so this bounds the generated statement size.
     redash_batch_size: int = 200
