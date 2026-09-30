@@ -66,7 +66,7 @@ export const termsSections = [
   },
   {
     title: 'Coin Crediting',
-    body: 'The coin amount shown on the Referral Page is credited to your friend the moment they sign up on Eaze App using the exact phone number you submitted. Your own coin reward is credited only once your friend completes their first successful recharge on Eaze App — signing up alone does not trigger your reward. Each reward is credited once per referral; retried or duplicate requests will not result in double crediting.',
+    body: 'Both coin rewards are credited only once your friend completes their first successful recharge on Eaze App using the exact phone number you submitted. Signing up alone does not trigger either reward — neither yours nor your friend\'s. Eaze App confirms the recharge against its own payment records before any coins are credited, so there may be a short delay between the recharge and the coins appearing. Each reward is credited once per referral; retried or duplicate requests will not result in double crediting.',
   },
   {
     title: 'Fair Play',

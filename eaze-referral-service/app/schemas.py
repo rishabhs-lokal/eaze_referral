@@ -77,8 +77,10 @@ class ReconcileResponse(CamelModel):
 
     ran: bool
     reason: str | None = None
+    pulled_from_sheet: int = 0
     checked: int = 0
     signups_confirmed: int = 0
+    disqualified_already_registered: int = 0
     signup_coins_credited: int = 0
     payments_confirmed: int = 0
     coins_credited: int = 0
@@ -95,4 +97,6 @@ class VerificationSummaryResponse(CamelModel):
     paid: int
     referrer_coins_credited: int
     paid_but_not_credited: int
-    signed_up_but_signup_coins_not_credited: int
+    paid_but_signup_coins_not_credited: int
+    disqualified_already_registered: int
+    awaiting_phone_check: int

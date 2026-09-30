@@ -180,6 +180,10 @@ class ReferralVerification(Base):
     __tablename__ = "referral_verifications"
     __table_args__ = (
         CheckConstraint(
+            "phone_check_status IN ('UNCHECKED', 'VERIFIED', 'ALREADY_REGISTERED')",
+            name="referral_verifications_phone_check_status",
+        ),
+        CheckConstraint(
             "signup_status IN ('PENDING', 'SIGNED_UP', 'NOT_FOUND')",
             name="referral_verifications_signup_status",
         ),
@@ -212,6 +216,19 @@ class ReferralVerification(Base):
         BigInteger, ForeignKey("referral_intents.id"), nullable=True
     )
     referral_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("referrals.id"), nullable=True)
+
+    # --- was this number ALREADY an Eaze user before it was ever referred? ---
+    # Distinct from signup_status below, and the two must never be conflated: this asks "was
+    # this person already on Eaze at the moment they were referred", which disqualifies the
+    # referral outright (the bonus never applies to an existing user — see the Eligibility
+    # section of the Terms). signup_status asks "have they registered by now", which is the
+    # thing we WANT to happen. A number that reads ALREADY_REGISTERED here can never earn
+    # anyone coins, no matter what the other columns later say.
+    phone_check_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="UNCHECKED")
+    phone_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The Eaze user id this number already belonged to, when it turns out to be a pre-existing
+    # account — kept so a disputed rejection can be investigated rather than just asserted.
+    pre_existing_eaze_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # --- did the referred person actually register on Eaze? ---
     signup_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="PENDING")

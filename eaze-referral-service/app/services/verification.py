@@ -33,9 +33,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import Referral, ReferralIntent, ReferralVerification, User, WalletTransaction
-from app.services import redash
+from app.db import get_sessionmaker
+from app.models import Referral, ReferralIntent, ReferralVerification, User
+from app.services import redash, referral_service
 from app.services.db_helpers import transaction
+from app.services.sheets_webhook import list_sheet_rows, update_sheet_status
 
 logger = logging.getLogger("eaze_referral.verification")
 
@@ -53,22 +55,35 @@ def _parse_timestamp(value) -> dt.datetime | None:
         return None
 
 
-async def _pending_rows(session: AsyncSession, limit: int) -> list[ReferralVerification]:
-    """Rows still worth asking Redash about: anything whose payment isn't confirmed yet, that is
-    confirmed paid but whose referrer hasn't been credited, or whose referred person hasn't had
-    their signup bonus yet (the cases a webhook outage or a mid-flight crash leaves behind —
-    exactly what a reconciler is for)."""
+async def _pending_rows(
+    session: AsyncSession, limit: int, phones: list[str] | None = None
+) -> list[ReferralVerification]:
+    """Rows still worth asking Redash about: a number whose pre-existing-user check never
+    completed, a payment not yet confirmed, or coins still owed to either side (what a webhook
+    outage or a mid-flight crash leaves behind — exactly what a reconciler is for).
+
+    Rows already disqualified as ALREADY_REGISTERED are excluded outright: that verdict is
+    final, so there is nothing left to ask about them.
+
+    `phones` narrows the pass to the numbers pulled from the Google Sheet. It can only ever
+    narrow: a number in the sheet that has no row here is ignored rather than acted on, so a
+    hand-edited spreadsheet can't invent a referral or move coins. The sheet chooses WHICH
+    referrals to look at; the database remains the authority on whether they're real.
+    """
+    query = select(ReferralVerification).where(
+        ReferralVerification.phone_check_status != "ALREADY_REGISTERED",
+        or_(
+            ReferralVerification.phone_check_status == "UNCHECKED",
+            ReferralVerification.payment_status == "PENDING",
+            ReferralVerification.referrer_coins_status == "PENDING",
+            ReferralVerification.signup_coins_status == "PENDING",
+        ),
+    )
+    if phones:
+        query = query.where(ReferralVerification.phone_e164.in_(phones))
+
     result = await session.execute(
-        select(ReferralVerification)
-        .where(
-            or_(
-                ReferralVerification.payment_status == "PENDING",
-                ReferralVerification.referrer_coins_status == "PENDING",
-                ReferralVerification.signup_coins_status == "PENDING",
-            )
-        )
-        .order_by(ReferralVerification.last_checked_at.asc().nulls_first())
-        .limit(limit)
+        query.order_by(ReferralVerification.last_checked_at.asc().nulls_first()).limit(limit)
     )
     return list(result.scalars().all())
 
@@ -171,129 +186,77 @@ async def _ensure_referral(
     return created_row.id
 
 
-async def _credit_signup(
-    session: AsyncSession, row: ReferralVerification, settings: Settings
-) -> bool:
-    """Pay the referred person their signup bonus once Redash confirms they really registered.
+async def verify_submitted_phone(phone_e164: str, settings: Settings) -> None:
+    """Check a freshly-submitted number against the real Eaze user base.
 
-    The counterpart to _credit_referrer, and the same rule applies: the wallet_transactions
-    insert is the authority, not this table's status column. That matters most for the rows
-    left behind by the old signup_rewarded_at bug — those users WERE paid, only the bookkeeping
-    never got stamped, so ON CONFLICT swallows the insert and this repairs the status without
-    paying anyone twice.
+    The rule, straight from the Eligibility section of the Terms: the referral bonus does not
+    apply to a phone number already registered on Eaze. So the question asked here is "does
+    this number already belong to an Eaze account?" — the Redash phone query returning nothing
+    is what verifies it. A hit means this was never a valid referral and it is disqualified
+    before it can accumulate any reward state.
 
-    Returns True only if coins actually moved.
+    Runs as a FastAPI BackgroundTask after the response has gone out, because Redash's job
+    polling can take seconds to minutes and must never sit in front of a user pressing Save.
+    Anything it can't check stays UNCHECKED and is retried by the reconciler, so a Redash
+    outage delays verification rather than losing it.
+
+    Opens its own session: by the time this runs the request's session is closed.
     """
-    referred_user_id = await _ensure_local_user(session, row.phone_e164)
-    referral_id = await _ensure_referral(session, row, referred_user_id)
-    if referral_id is None:
-        return False
+    if not redash.is_configured(settings) or not settings.redash_verify_phone_query_id:
+        return
 
-    ledger = await session.execute(
-        pg_insert(WalletTransaction.__table__)
-        .values(
-            user_id=referred_user_id,
-            amount=settings.signup_bonus_coins,
-            type="REFERRAL_SIGNUP_BONUS",
-            reference_type="referral",
-            reference_id=referral_id,
-        )
-        .on_conflict_do_nothing(index_elements=["user_id", "type", "reference_id"])
-        .returning(WalletTransaction.__table__.c.id)
+    try:
+        matches = await _resolve_eaze_user_ids(settings, [phone_e164])
+    except redash.RedashError as exc:
+        logger.warning("phone verification failed for %s: %s", phone_e164, exc)
+        return
+
+    match = matches.get(phone_e164)
+    async with get_sessionmaker()() as session:
+        async with transaction(session):
+            if match and match.get("user_id") is not None:
+                await session.execute(
+                    update(ReferralVerification.__table__)
+                    .where(ReferralVerification.phone_e164 == phone_e164)
+                    .values(
+                        phone_check_status="ALREADY_REGISTERED",
+                        pre_existing_eaze_user_id=str(match["user_id"]),
+                        phone_checked_at=func.now(),
+                        updated_at=func.now(),
+                    )
+                )
+                # Kill the intent too, so nothing downstream can match a signup to it and
+                # build a referral on a number that was never eligible.
+                await session.execute(
+                    update(ReferralIntent.__table__)
+                    .where(
+                        ReferralIntent.phone_e164 == phone_e164,
+                        ReferralIntent.status == "PENDING",
+                    )
+                    .values(status="EXPIRED")
+                )
+                logger.info(
+                    "referral disqualified — %s is already Eaze user %s",
+                    phone_e164,
+                    match["user_id"],
+                )
+            else:
+                await session.execute(
+                    update(ReferralVerification.__table__)
+                    .where(ReferralVerification.phone_e164 == phone_e164)
+                    .values(
+                        phone_check_status="VERIFIED",
+                        phone_checked_at=func.now(),
+                        updated_at=func.now(),
+                    )
+                )
+
+    # Mirror the verdict into the sheet, after the database has it. Best-effort by design.
+    await update_sheet_status(
+        phone_e164,
+        settings,
+        verification="Already registered" if match else "Verified",
     )
-    newly_credited = ledger.first() is not None
-
-    if newly_credited:
-        await session.execute(
-            update(User.__table__)
-            .where(User.id == referred_user_id)
-            .values(wallet_balance=User.wallet_balance + settings.signup_bonus_coins)
-        )
-
-    await session.execute(
-        update(Referral.__table__)
-        .where(Referral.id == referral_id, Referral.signup_rewarded_at.is_(None))
-        .values(signup_rewarded_at=func.now(), updated_at=func.now())
-    )
-    await session.execute(
-        update(ReferralVerification.__table__)
-        .where(ReferralVerification.id == row.id)
-        .values(
-            referral_id=referral_id,
-            signup_coins_status="CREDITED",
-            signup_coins_amount=settings.signup_bonus_coins,
-            signup_coins_credited_at=func.now(),
-            updated_at=func.now(),
-        )
-    )
-    return newly_credited
-
-
-async def _credit_referrer(
-    session: AsyncSession, row: ReferralVerification, settings: Settings
-) -> bool:
-    """Credit the referrer for a confirmed-paid referral. Returns True if coins were actually
-    moved by this call, False if the ledger shows they already had been.
-
-    The wallet_transactions insert is the authority, not the referral_verifications row: if
-    ON CONFLICT swallows the insert, the referrer was already paid for this referral (by the
-    webhook path, or an earlier run of this reconciler) and the balance must not move again.
-    We still stamp the tracking row in that case, so it reflects the ledger's truth.
-    """
-    referral_id = row.referral_id
-    if referral_id is None:
-        result = await session.execute(
-            select(Referral.id).where(Referral.referred_phone_e164 == row.phone_e164)
-        )
-        referral_id = result.scalar_one_or_none()
-        if referral_id is None:
-            # Paid, but we have no referral record to pay against — a signup that never came
-            # through our own signup_match. Left PENDING deliberately so it shows up as
-            # outstanding rather than being silently closed.
-            return False
-
-    ledger = await session.execute(
-        pg_insert(WalletTransaction.__table__)
-        .values(
-            user_id=row.referrer_user_id,
-            amount=settings.recharge_bonus_coins,
-            type="REFERRAL_RECHARGE_BONUS",
-            reference_type="referral",
-            reference_id=referral_id,
-        )
-        .on_conflict_do_nothing(index_elements=["user_id", "type", "reference_id"])
-        .returning(WalletTransaction.__table__.c.id)
-    )
-    newly_credited = ledger.first() is not None
-
-    if newly_credited:
-        await session.execute(
-            update(User.__table__)
-            .where(User.id == row.referrer_user_id)
-            .values(wallet_balance=User.wallet_balance + settings.recharge_bonus_coins)
-        )
-        await session.execute(
-            update(Referral.__table__)
-            .where(Referral.id == referral_id, Referral.status == "SIGNED_UP")
-            .values(
-                status="REWARDED",
-                recharge_rewarded_at=func.now(),
-                updated_at=func.now(),
-            )
-        )
-
-    await session.execute(
-        update(ReferralVerification.__table__)
-        .where(ReferralVerification.id == row.id)
-        .values(
-            referral_id=referral_id,
-            referrer_coins_status="CREDITED",
-            referrer_coins_amount=settings.recharge_bonus_coins,
-            referrer_coins_credited_at=func.now(),
-            updated_at=func.now(),
-        )
-    )
-    return newly_credited
 
 
 async def reconcile(session: AsyncSession, settings: Settings, limit: int | None = None) -> dict:
@@ -305,9 +268,26 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
         return {"ran": False, "reason": "redash_query_ids_not_configured"}
 
     batch_limit = limit or settings.redash_batch_size
-    rows = await _pending_rows(session, batch_limit)
+
+    # Pull the phone numbers from the Google Sheet — that's the working list of who's been
+    # referred. Falls back to the database queue when the sheet is unreachable or empty, so a
+    # Sheets outage delays nothing: people owed coins still get paid.
+    sheet_phones: list[str] = []
+    try:
+        sheet_rows = await list_sheet_rows(settings)
+        sheet_phones = [
+            str(r["phoneE164"]).strip() for r in sheet_rows if r.get("phoneE164")
+        ]
+    except Exception:  # noqa: BLE001 - the sheet is never allowed to break a payout run
+        logger.warning("could not pull phone numbers from the sheet", exc_info=True)
+
+    if sheet_phones:
+        logger.info("pulled %d phone numbers from the sheet", len(sheet_phones))
+    rows = await _pending_rows(session, batch_limit, phones=sheet_phones or None)
     empty = {
+        "pulled_from_sheet": len(sheet_phones),
         "signups_confirmed": 0,
+        "disqualified_already_registered": 0,
         "signup_coins_credited": 0,
         "payments_confirmed": 0,
         "coins_credited": 0,
@@ -331,39 +311,51 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
     async with transaction(session):
         for row in rows:
             match = resolved.get(row.phone_e164)
+            # Captured before the signup fields are touched below — the pre-existing-user
+            # verdict depends on what we knew BEFORE this pass, not after it.
+            signup_seen_by_us = row.signup_status == "SIGNED_UP"
+
             if match and match.get("user_id") is not None:
                 row.eaze_user_id = str(match["user_id"])
                 row.signup_status = "SIGNED_UP"
                 row.signed_up_at = row.signed_up_at or _parse_timestamp(match.get("registered_at"))
                 row.source = "REDASH"
                 stats["signups_confirmed"] += 1
-            elif row.phone_e164 in unresolved and row.signup_status == "PENDING":
-                # Asked about it, warehouse has no such user — they genuinely haven't
-                # registered (yet). Not an error, and re-checked on the next pass.
-                # Guarded on PENDING so this can only ever fill in an unknown, never
-                # contradict a signup our own pipeline already saw and rewarded.
-                row.signup_status = "NOT_FOUND"
 
-    # Step 2 — pay the signup bonus to anyone whose registration is now confirmed but who never
-    # received it. Unlike the referrer's reward this is NOT gated on payment: per the Terms, the
-    # referred person earns their coins by signing up. It's gated on the signup being real, which
-    # is what step 1 just established.
-    owed_signup = [
-        r for r in rows if r.signup_status == "SIGNED_UP" and r.signup_coins_status == "PENDING"
+                if row.phone_check_status == "UNCHECKED":
+                    # The submit-time check never completed (Redash was down), so decide it
+                    # now from what we can still distinguish: if our own pipeline recorded
+                    # the signup, they registered *after* being referred and the referral is
+                    # good. If it never did, this number already belonged to an Eaze account
+                    # before anyone referred it — which the Terms exclude.
+                    if signup_seen_by_us:
+                        row.phone_check_status = "VERIFIED"
+                    else:
+                        row.phone_check_status = "ALREADY_REGISTERED"
+                        row.pre_existing_eaze_user_id = str(match["user_id"])
+                        stats["disqualified_already_registered"] += 1
+                    row.phone_checked_at = dt.datetime.now(dt.timezone.utc)
+            else:
+                if row.phone_e164 in unresolved and row.phone_check_status == "UNCHECKED":
+                    # No Eaze account for this number — which is exactly what makes it a
+                    # valid referral target.
+                    row.phone_check_status = "VERIFIED"
+                    row.phone_checked_at = dt.datetime.now(dt.timezone.utc)
+                if row.phone_e164 in unresolved and row.signup_status == "PENDING":
+                    # Not registered yet. Not an error, and re-checked on the next pass.
+                    # Guarded on PENDING so this can only fill in an unknown, never
+                    # contradict a signup our own pipeline already saw.
+                    row.signup_status = "NOT_FOUND"
+
+    # Step 2 — ask about payments. Nobody is paid without this answering yes: a confirmed
+    # payment is the only event that releases coins, to either side.
+    payable = [
+        r
+        for r in rows
+        if r.eaze_user_id
+        and r.phone_check_status != "ALREADY_REGISTERED"
+        and (r.referrer_coins_status == "PENDING" or r.signup_coins_status == "PENDING")
     ]
-    if owed_signup:
-        async with transaction(session):
-            for row in owed_signup:
-                try:
-                    if await _credit_signup(session, row, settings):
-                        stats["signup_coins_credited"] += 1
-                except Exception:  # noqa: BLE001 - one bad row must not abort the whole pass
-                    logger.warning(
-                        "signup credit failed for %s", row.phone_e164, exc_info=True
-                    )
-
-    # Step 3 — ask about payments for everyone we now have an Eaze id for.
-    payable = [r for r in rows if r.eaze_user_id and r.referrer_coins_status == "PENDING"]
     if not payable:
         await _stamp_checked(session, [r.id for r in rows])
         return stats
@@ -381,28 +373,75 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
             paid_count = int(payment.get("successful_payment_count") or 0) if payment else 0
 
             if paid_count <= 0:
-                # Confirmed no payment yet. The referrer is simply not owed anything — this is
-                # the check working, not a failure. Stays PENDING and is re-checked.
+                # Confirmed no payment yet. Nobody is owed anything — this is the check
+                # working, not a failure. Stays PENDING and is re-checked next pass.
                 row.payment_status = "NO_PAYMENT"
                 row.last_error = None
                 continue
 
-            row.payment_status = "PAID"
-            row.successful_payment_count = paid_count
-            row.first_payment_at = row.first_payment_at or _parse_timestamp(
-                payment.get("first_payment_at")
-            )
-            if payment.get("first_payment_amount_paise") is not None:
-                row.first_payment_amount_paise = int(payment["first_payment_amount_paise"])
             row.source = "REDASH"
             row.last_error = None
             stats["payments_confirmed"] += 1
 
-            if await _credit_referrer(session, row, settings):
+            try:
+                moved = await _pay_out(session, row, settings, payment, paid_count)
+            except Exception:  # noqa: BLE001 - one bad row must not abort the whole pass
+                logger.warning("payout failed for %s", row.phone_e164, exc_info=True)
+                continue
+
+            if "referred" in moved:
+                stats["signup_coins_credited"] += 1
+            if "referrer" in moved:
                 stats["coins_credited"] += 1
 
     await _stamp_checked(session, [r.id for r in rows])
     return stats
+
+
+async def _pay_out(
+    session: AsyncSession,
+    row: ReferralVerification,
+    settings: Settings,
+    payment: dict,
+    paid_count: int,
+) -> list[str]:
+    """Hand a confirmed payment to the one crediting path, creating the local records it needs
+    if our own pipeline never saw the signup. Returns which sides actually moved coins."""
+    referred_user_id = await _ensure_local_user(session, row.phone_e164)
+    referral_id = await _ensure_referral(session, row, referred_user_id)
+    if referral_id is None:
+        # Paid, but no referral can legitimately exist to pay against. Left PENDING so it shows
+        # up as outstanding rather than being silently closed.
+        return []
+
+    first_at = _parse_timestamp(payment.get("first_payment_at"))
+    amount = payment.get("first_payment_amount_paise")
+    result = await referral_service.credit_both_on_payment(
+        session,
+        referral_id=referral_id,
+        referrer_user_id=row.referrer_user_id,
+        referred_user_id=referred_user_id,
+        referred_phone_e164=row.phone_e164,
+        settings=settings,
+        first_payment_amount_paise=int(amount) if amount is not None else None,
+        payment_count=paid_count,
+    )
+    if first_at is not None:
+        await session.execute(
+            update(ReferralVerification.__table__)
+            .where(ReferralVerification.id == row.id, ReferralVerification.first_payment_at.is_(None))
+            .values(first_payment_at=first_at)
+        )
+
+    if result["eligible"]:
+        await update_sheet_status(
+            row.phone_e164,
+            settings,
+            payment="Paid",
+            friend_coins=f"Credited {settings.signup_bonus_coins}",
+            referrer_coins=f"Credited {settings.recharge_bonus_coins}",
+        )
+    return result["credited"]
 
 
 async def _stamp_checked(session: AsyncSession, row_ids: list[int]) -> None:
@@ -465,8 +504,18 @@ async def verification_summary(session: AsyncSession) -> dict:
     )
     signup_owed = await session.execute(
         select(func.count()).select_from(ReferralVerification).where(
-            ReferralVerification.signup_status == "SIGNED_UP",
+            ReferralVerification.payment_status == "PAID",
             ReferralVerification.signup_coins_status == "PENDING",
+        )
+    )
+    disqualified = await session.execute(
+        select(func.count()).select_from(ReferralVerification).where(
+            ReferralVerification.phone_check_status == "ALREADY_REGISTERED"
+        )
+    )
+    unchecked = await session.execute(
+        select(func.count()).select_from(ReferralVerification).where(
+            ReferralVerification.phone_check_status == "UNCHECKED"
         )
     )
     return {
@@ -475,5 +524,7 @@ async def verification_summary(session: AsyncSession) -> dict:
         "paid": paid.scalar_one(),
         "referrer_coins_credited": credited.scalar_one(),
         "paid_but_not_credited": awaiting.scalar_one(),
-        "signed_up_but_signup_coins_not_credited": signup_owed.scalar_one(),
+        "paid_but_signup_coins_not_credited": signup_owed.scalar_one(),
+        "disqualified_already_registered": disqualified.scalar_one(),
+        "awaiting_phone_check": unchecked.scalar_one(),
     }

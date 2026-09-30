@@ -65,6 +65,11 @@ async def submit_intents(
     for phone in body.phone_numbers_e164:
         if phone not in skipped_phones:
             background_tasks.add_task(notify_google_sheet, decoded_id, phone, settings)
+            # Confirm against the real Eaze user base that this number isn't already an
+            # account — the bonus never applies to an existing user. Backgrounded because
+            # Redash job polling can take seconds to minutes and must not sit in front of the
+            # user pressing Save; the referral is disqualified moments later if it fails.
+            background_tasks.add_task(verification.verify_submitted_phone, phone, settings)
 
     return SubmitIntentsResponse(saved=saved, skipped=[SkippedPhone(**s) for s in skipped])
 
@@ -92,12 +97,25 @@ async def signup_match(body: SignupMatchRequest, session: AsyncSession = Depends
 
 @router.post("/recharge-webhook", response_model=RechargeWebhookResponse)
 async def recharge_webhook(
-    body: RechargeWebhookRequest, session: AsyncSession = Depends(get_db)
+    body: RechargeWebhookRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
 ) -> RechargeWebhookResponse:
     settings = get_settings()
     result = await referral_service.recharge_webhook(
         session, body.user_id, body.amount_paise, body.status, settings
     )
+    # Both sides were just paid — mirror that into the sheet the same way the reconciler does,
+    # so the row reads the same however the payout was triggered.
+    if result.get("credited") and result.get("referred_phone_e164"):
+        background_tasks.add_task(
+            update_sheet_status,
+            result["referred_phone_e164"],
+            settings,
+            payment="Paid",
+            friend_coins=f"Credited {settings.signup_bonus_coins}",
+            referrer_coins=f"Credited {settings.recharge_bonus_coins}",
+        )
     return RechargeWebhookResponse(**result)
 
 

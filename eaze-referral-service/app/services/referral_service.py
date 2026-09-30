@@ -230,25 +230,11 @@ async def signup_match(session: AsyncSession, phone_e164: str, settings: Setting
                 .where(ReferralIntent.id == intent.id)
                 .values(status="MATCHED", matched_user_id=new_user.id, matched_at=func.now())
             )
-            await session.execute(
-                pg_insert(WalletTransaction.__table__)
-                .values(
-                    user_id=new_user.id,
-                    amount=settings.signup_bonus_coins,
-                    type="REFERRAL_SIGNUP_BONUS",
-                    reference_type="referral",
-                    reference_id=referral_id,
-                )
-                .on_conflict_do_nothing(index_elements=["user_id", "type", "reference_id"])
-            )
-            await session.execute(
-                update(User.__table__)
-                .where(User.id == new_user.id)
-                .values(wallet_balance=User.wallet_balance + settings.signup_bonus_coins)
-            )
-            # Advance the tracking row: this number has now genuinely registered, and the
-            # referred person's own bonus is paid. The referrer's half stays PENDING — it is
-            # gated on a real payment, which has not happened yet.
+            # Signing up records the relationship — it does NOT pay anyone. Both rewards are
+            # gated on the referred person actually paying (see the Coin Crediting section of
+            # the Terms): they are credited together by _credit_both_on_payment, from either
+            # the recharge webhook or the Redash reconciler. Leaving both coin statuses PENDING
+            # here is the gate.
             await session.execute(
                 update(ReferralVerification.__table__)
                 .where(ReferralVerification.phone_e164 == phone_e164)
@@ -256,9 +242,6 @@ async def signup_match(session: AsyncSession, phone_e164: str, settings: Setting
                     referral_id=referral_id,
                     signup_status="SIGNED_UP",
                     signed_up_at=func.now(),
-                    signup_coins_status="CREDITED",
-                    signup_coins_amount=settings.signup_bonus_coins,
-                    signup_coins_credited_at=func.now(),
                     updated_at=func.now(),
                 )
             )
@@ -266,7 +249,7 @@ async def signup_match(session: AsyncSession, phone_e164: str, settings: Setting
         return {
             "user_id": new_user.id,
             "referred": referral_id is not None,
-            "coins_credited": settings.signup_bonus_coins if referral_id else 0,
+            "coins_credited": 0,
         }
 
 
@@ -314,40 +297,122 @@ async def recharge_webhook(
         referral_id, referrer_user_id = referral_row.id, referral_row.referrer_user_id
         referred_phone = referral_row.referred_phone_e164
 
-        await session.execute(
+        paid = await credit_both_on_payment(
+            session,
+            referral_id=referral_id,
+            referrer_user_id=referrer_user_id,
+            referred_user_id=user_id,
+            referred_phone_e164=referred_phone,
+            settings=settings,
+            first_payment_amount_paise=amount_paise,
+        )
+        if not paid["eligible"]:
+            return {
+                "credited": False,
+                "reason": paid["reason"],
+                "recharge_id": recharge_id,
+            }
+
+        return {
+            "credited": True,
+            "referrer_user_id": referrer_user_id,
+            "recharge_id": recharge_id,
+            "referred_phone_e164": referred_phone,
+        }
+
+
+async def credit_both_on_payment(
+    session: AsyncSession,
+    *,
+    referral_id: int,
+    referrer_user_id: int,
+    referred_user_id: int,
+    referred_phone_e164: str,
+    settings: Settings,
+    first_payment_amount_paise: int | None = None,
+    payment_count: int = 1,
+) -> dict:
+    """Pay BOTH sides of a referral, because the referred person actually paid.
+
+    A confirmed payment is the single event that releases coins — for the referrer AND for the
+    person referred. Signing up alone pays nobody (see the Coin Crediting section of the Terms).
+    Keeping both credits in one function is what makes that guarantee checkable: there is no
+    other code path that moves referral coins.
+
+    Called from two places, and safe from both at once:
+      - recharge_webhook, on the payment event itself
+      - the Redash reconciler, when it finds a real payment the webhook never reported
+
+    Both wallet inserts go through wallet_transactions' UNIQUE(user_id, type, reference_id), so
+    whichever path arrives second moves nothing. Must be called inside a transaction.
+    """
+    # A number that was already an Eaze user when it was referred can never earn coins, however
+    # much it later pays — the bonus does not apply to existing users. This is the last gate
+    # before money moves, deliberately re-checked here rather than trusted from the caller.
+    check = await session.execute(
+        select(ReferralVerification.phone_check_status).where(
+            ReferralVerification.phone_e164 == referred_phone_e164
+        )
+    )
+    if check.scalar_one_or_none() == "ALREADY_REGISTERED":
+        return {"eligible": False, "reason": "phone_already_registered", "credited": []}
+
+    credited: list[str] = []
+    for who, wallet_user_id, amount, tx_type in (
+        ("referred", referred_user_id, settings.signup_bonus_coins, "REFERRAL_SIGNUP_BONUS"),
+        ("referrer", referrer_user_id, settings.recharge_bonus_coins, "REFERRAL_RECHARGE_BONUS"),
+    ):
+        ledger = await session.execute(
             pg_insert(WalletTransaction.__table__)
             .values(
-                user_id=referrer_user_id,
-                amount=settings.recharge_bonus_coins,
-                type="REFERRAL_RECHARGE_BONUS",
+                user_id=wallet_user_id,
+                amount=amount,
+                type=tx_type,
                 reference_type="referral",
                 reference_id=referral_id,
             )
             .on_conflict_do_nothing(index_elements=["user_id", "type", "reference_id"])
+            .returning(WalletTransaction.__table__.c.id)
         )
-        await session.execute(
-            update(User.__table__)
-            .where(User.id == referrer_user_id)
-            .values(wallet_balance=User.wallet_balance + settings.recharge_bonus_coins)
-        )
-        # The payment is what earns the referrer their coins, so both facts land on the
-        # tracking row together — a row can never show CREDITED against an unpaid referral.
-        await session.execute(
-            update(ReferralVerification.__table__)
-            .where(ReferralVerification.phone_e164 == referred_phone)
-            .values(
-                payment_status="PAID",
-                first_payment_at=func.now(),
-                first_payment_amount_paise=amount_paise,
-                successful_payment_count=1,
-                referrer_coins_status="CREDITED",
-                referrer_coins_amount=settings.recharge_bonus_coins,
-                referrer_coins_credited_at=func.now(),
-                updated_at=func.now(),
+        if ledger.first() is not None:
+            await session.execute(
+                update(User.__table__)
+                .where(User.id == wallet_user_id)
+                .values(wallet_balance=User.wallet_balance + amount)
             )
-        )
+            credited.append(who)
 
-        return {"credited": True, "referrer_user_id": referrer_user_id, "recharge_id": recharge_id}
+    await session.execute(
+        update(Referral.__table__)
+        .where(Referral.id == referral_id)
+        .values(
+            status="REWARDED",
+            signup_rewarded_at=func.coalesce(Referral.signup_rewarded_at, func.now()),
+            recharge_rewarded_at=func.coalesce(Referral.recharge_rewarded_at, func.now()),
+            updated_at=func.now(),
+        )
+    )
+    values: dict = {
+        "payment_status": "PAID",
+        "successful_payment_count": payment_count,
+        "signup_coins_status": "CREDITED",
+        "signup_coins_amount": settings.signup_bonus_coins,
+        "signup_coins_credited_at": func.now(),
+        "referrer_coins_status": "CREDITED",
+        "referrer_coins_amount": settings.recharge_bonus_coins,
+        "referrer_coins_credited_at": func.now(),
+        "first_payment_at": func.coalesce(ReferralVerification.first_payment_at, func.now()),
+        "updated_at": func.now(),
+    }
+    if first_payment_amount_paise is not None:
+        values["first_payment_amount_paise"] = first_payment_amount_paise
+    await session.execute(
+        update(ReferralVerification.__table__)
+        .where(ReferralVerification.phone_e164 == referred_phone_e164)
+        .values(**values)
+    )
+
+    return {"eligible": True, "reason": None, "credited": credited}
 
 
 async def admin_funnel(session: AsyncSession) -> dict:
