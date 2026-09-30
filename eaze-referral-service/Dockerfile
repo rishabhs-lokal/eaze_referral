@@ -15,6 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
+# Operational scripts need to be runnable against a real deployment, not just a dev checkout —
+# scripts/check_redash.py in particular is meant to be run wherever the REDASH_* env vars
+# actually live, which is inside this image.
+COPY scripts ./scripts
 
 RUN chown -R app:app /srv
 USER app
