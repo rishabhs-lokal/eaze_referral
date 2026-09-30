@@ -20,6 +20,13 @@ def decode_user_id(raw: str) -> str:
     normalized += "=" * ((-len(normalized)) % 4)
 
     try:
-        return base64.b64decode(normalized, validate=False).decode("utf-8")
+        decoded = base64.b64decode(normalized, validate=False).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"Invalid base64 user_id: {raw!r}") from exc
+
+    # validate=False silently discards anything outside the base64 alphabet, so an input made
+    # entirely of junk (e.g. "!!!!") decodes to "" rather than raising. Without this guard that
+    # empty string would flow on as a real user id and create a user with a blank external_ref.
+    if not decoded:
+        raise ValueError(f"Invalid base64 user_id: {raw!r}")
+    return decoded

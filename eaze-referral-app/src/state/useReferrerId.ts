@@ -1,25 +1,36 @@
 import { useEffect, useState } from 'react';
 import * as Linking from 'expo-linking';
+import { decodeUserId } from './identity';
 
 // The in-app banner opens this screen with the user's identity base64-encoded in the URL
 // (web: https://refer.eaze.app/?user_id=<base64>, native: eaze://refer?user_id=<base64>).
-// The base64 decode happens on the BACKEND (app/services/identity.py), not here — the webapp
-// just extracts the raw param and passes it straight through on every API call, so decoding is
-// centralized in one place regardless of which client (this webapp, a future native client,
-// direct API use) sends the request.
+//
+// The base64 is decoded in BOTH places, on purpose, and they are not redundant:
+//   - the BACKEND (app/services/identity.py) decodes at the API boundary because it cannot trust
+//     a client, and because everything downstream (users.external_ref, login_logs, referral_logs,
+//     message_copy_logs) must store the real user id no matter which client called it
+//   - here, so a link carrying a malformed user_id is rejected on the spot instead of after a
+//     round trip that returns 400, and so the real user id exists on the device rather than only
+//     ever server-side
+// `userId` below is still the RAW base64, and that is still what gets sent on every API call —
+// the wire contract is unchanged. `decodedUserId` is the opened form, for local use only.
 //
 // There is no fallback: a user can only ever reach this screen via a link the Eaze app itself
 // generated, so a missing user_id means the link didn't come from the app and the screen refuses
-// to proceed (see ReferralScreen's `missing` state).
+// to proceed (see ReferralScreen's `missing` state). A user_id that is present but doesn't decode
+// is treated the same way — it cannot have come from the app either.
 export type ReferrerIdStatus =
   | { status: 'loading' }
-  | { status: 'ready'; userId: string }
+  | { status: 'ready'; userId: string; decodedUserId: string }
   | { status: 'missing' };
 
-function extractUserId(url: string): string | null {
+function extractReferrer(url: string): { userId: string; decodedUserId: string } | null {
   const { queryParams } = Linking.parse(url);
   const raw = queryParams?.user_id;
-  return typeof raw === 'string' && raw.length > 0 ? raw : null;
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+
+  const decodedUserId = decodeUserId(raw);
+  return decodedUserId ? { userId: raw, decodedUserId } : null;
 }
 
 export function useReferrerId(): ReferrerIdStatus {
@@ -30,13 +41,13 @@ export function useReferrerId(): ReferrerIdStatus {
 
     Linking.getInitialURL().then((url) => {
       if (!mounted) return;
-      const userId = url ? extractUserId(url) : null;
-      setState(userId ? { status: 'ready', userId } : { status: 'missing' });
+      const referrer = url ? extractReferrer(url) : null;
+      setState(referrer ? { status: 'ready', ...referrer } : { status: 'missing' });
     });
 
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      const userId = extractUserId(url);
-      setState(userId ? { status: 'ready', userId } : { status: 'missing' });
+      const referrer = extractReferrer(url);
+      setState(referrer ? { status: 'ready', ...referrer } : { status: 'missing' });
     });
 
     return () => {
