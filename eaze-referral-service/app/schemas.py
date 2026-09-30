@@ -79,6 +79,7 @@ class ReconcileResponse(CamelModel):
     reason: str | None = None
     checked: int = 0
     signups_confirmed: int = 0
+    signup_coins_credited: int = 0
     payments_confirmed: int = 0
     coins_credited: int = 0
     error: str | None = None
@@ -94,3 +95,4 @@ class VerificationSummaryResponse(CamelModel):
     paid: int
     referrer_coins_credited: int
     paid_but_not_credited: int
+    signed_up_but_signup_coins_not_credited: int

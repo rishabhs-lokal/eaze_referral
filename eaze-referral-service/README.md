@@ -163,13 +163,33 @@ number, opened the moment the referral is accepted and only ever advanced afterw
 Because a row exists from referral time, the table can answer what `referrals` structurally
 cannot: which referred numbers never signed up, and which signed up but never paid.
 
-The operationally important query is "who has earned a reward they haven't received":
+**Who gets paid, and when.** The two sides are rewarded on different events, matching the Terms:
+
+| Who | Trigger | Gate |
+|---|---|---|
+| The **referred friend** | They register on Eaze | Signup confirmed — payment is *not* required |
+| The **referrer** | Their friend's first successful payment | `payment_status = 'PAID'` |
+
+The reconciler repairs both. If a real signup never reached `/signup-match`, it creates the
+local user and referral records from the Redash-confirmed registration and pays the friend their
+signup bonus. If a real payment never reached the recharge webhook, it pays the referrer.
+
+The operationally important queries are "who has earned a reward they haven't received":
 
 ```sql
+-- referrers owed their reward
 SELECT phone_e164, referrer_external_id, first_payment_at, last_error
 FROM referral_verifications
 WHERE payment_status = 'PAID' AND referrer_coins_status = 'PENDING';
+
+-- referred friends owed their signup bonus
+SELECT phone_e164, referrer_external_id, signed_up_at, last_error
+FROM referral_verifications
+WHERE signup_status = 'SIGNED_UP' AND signup_coins_status = 'PENDING';
 ```
+
+Both are surfaced as counts by `GET /api/referral/admin/verification-summary`
+(`paidButNotCredited` and `signedUpButSignupCoinsNotCredited`). Both should normally be zero.
 
 Off by default (`REDASH_BASE_URL` unset) — the pipeline then behaves exactly as it did before,
 running on the recharge webhook alone. To turn it on you need **two Redash queries**:

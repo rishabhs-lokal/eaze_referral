@@ -33,7 +33,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import Referral, ReferralVerification, User, WalletTransaction
+from app.models import Referral, ReferralIntent, ReferralVerification, User, WalletTransaction
 from app.services import redash
 from app.services.db_helpers import transaction
 
@@ -54,15 +54,17 @@ def _parse_timestamp(value) -> dt.datetime | None:
 
 
 async def _pending_rows(session: AsyncSession, limit: int) -> list[ReferralVerification]:
-    """Rows still worth asking Redash about: anything whose payment isn't confirmed yet, or
-    that is confirmed paid but whose referrer hasn't been credited (the case a webhook outage
-    or a mid-flight crash leaves behind — exactly what a reconciler is for)."""
+    """Rows still worth asking Redash about: anything whose payment isn't confirmed yet, that is
+    confirmed paid but whose referrer hasn't been credited, or whose referred person hasn't had
+    their signup bonus yet (the cases a webhook outage or a mid-flight crash leaves behind —
+    exactly what a reconciler is for)."""
     result = await session.execute(
         select(ReferralVerification)
         .where(
             or_(
                 ReferralVerification.payment_status == "PENDING",
                 ReferralVerification.referrer_coins_status == "PENDING",
+                ReferralVerification.signup_coins_status == "PENDING",
             )
         )
         .order_by(ReferralVerification.last_checked_at.asc().nulls_first())
@@ -97,6 +99,134 @@ async def _fetch_payments(settings: Settings, user_ids: list[str]) -> dict[str, 
         {"user_ids": ",".join(user_ids)},
     )
     return {str(row.get("user_id")): row for row in rows if row.get("user_id") is not None}
+
+
+async def _ensure_local_user(session: AsyncSession, phone_e164: str) -> int:
+    """Get (or create) the local `users` row for a referred phone number.
+
+    Creating one here is bookkeeping, not account creation — `users` is this service's minimal
+    stand-in for the real Eaze user table (see its docstring), and by the time we get here
+    Redash has already confirmed the person is a genuinely registered Eaze user. Without this,
+    a signup that Eaze processed but never told us about could never be rewarded, because there
+    would be no local id to credit.
+    """
+    result = await session.execute(select(User.id).where(User.phone_e164 == phone_e164))
+    user_id = result.scalar_one_or_none()
+    if user_id is not None:
+        return user_id
+
+    await session.execute(
+        pg_insert(User.__table__)
+        .values(phone_e164=phone_e164)
+        .on_conflict_do_nothing(index_elements=["phone_e164"])
+    )
+    result = await session.execute(select(User.id).where(User.phone_e164 == phone_e164))
+    return result.scalar_one()
+
+
+async def _ensure_referral(
+    session: AsyncSession, row: ReferralVerification, referred_user_id: int
+) -> int | None:
+    """The referral record a signup reward has to hang off. Returns None when one can't
+    legitimately exist — no originating intent, or referrer and referred turning out to be the
+    same person (which the referrals table's own no_self_referral constraint would reject
+    anyway)."""
+    if row.referral_id is not None:
+        return row.referral_id
+
+    existing = await session.execute(
+        select(Referral.id).where(Referral.referred_phone_e164 == row.phone_e164)
+    )
+    found = existing.scalar_one_or_none()
+    if found is not None:
+        return found
+
+    if row.referral_intent_id is None or referred_user_id == row.referrer_user_id:
+        return None
+
+    created = await session.execute(
+        pg_insert(Referral.__table__)
+        .values(
+            referrer_user_id=row.referrer_user_id,
+            referred_user_id=referred_user_id,
+            referred_phone_e164=row.phone_e164,
+            referral_intent_id=row.referral_intent_id,
+        )
+        .on_conflict_do_nothing(index_elements=["referred_user_id"])
+        .returning(Referral.__table__.c.id)
+    )
+    created_row = created.first()
+    if created_row is None:
+        # Raced with another writer (or the webhook path) — take whatever landed.
+        fallback = await session.execute(
+            select(Referral.id).where(Referral.referred_user_id == referred_user_id)
+        )
+        return fallback.scalar_one_or_none()
+
+    await session.execute(
+        update(ReferralIntent.__table__)
+        .where(ReferralIntent.id == row.referral_intent_id, ReferralIntent.status == "PENDING")
+        .values(status="MATCHED", matched_user_id=referred_user_id, matched_at=func.now())
+    )
+    return created_row.id
+
+
+async def _credit_signup(
+    session: AsyncSession, row: ReferralVerification, settings: Settings
+) -> bool:
+    """Pay the referred person their signup bonus once Redash confirms they really registered.
+
+    The counterpart to _credit_referrer, and the same rule applies: the wallet_transactions
+    insert is the authority, not this table's status column. That matters most for the rows
+    left behind by the old signup_rewarded_at bug — those users WERE paid, only the bookkeeping
+    never got stamped, so ON CONFLICT swallows the insert and this repairs the status without
+    paying anyone twice.
+
+    Returns True only if coins actually moved.
+    """
+    referred_user_id = await _ensure_local_user(session, row.phone_e164)
+    referral_id = await _ensure_referral(session, row, referred_user_id)
+    if referral_id is None:
+        return False
+
+    ledger = await session.execute(
+        pg_insert(WalletTransaction.__table__)
+        .values(
+            user_id=referred_user_id,
+            amount=settings.signup_bonus_coins,
+            type="REFERRAL_SIGNUP_BONUS",
+            reference_type="referral",
+            reference_id=referral_id,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "type", "reference_id"])
+        .returning(WalletTransaction.__table__.c.id)
+    )
+    newly_credited = ledger.first() is not None
+
+    if newly_credited:
+        await session.execute(
+            update(User.__table__)
+            .where(User.id == referred_user_id)
+            .values(wallet_balance=User.wallet_balance + settings.signup_bonus_coins)
+        )
+
+    await session.execute(
+        update(Referral.__table__)
+        .where(Referral.id == referral_id, Referral.signup_rewarded_at.is_(None))
+        .values(signup_rewarded_at=func.now(), updated_at=func.now())
+    )
+    await session.execute(
+        update(ReferralVerification.__table__)
+        .where(ReferralVerification.id == row.id)
+        .values(
+            referral_id=referral_id,
+            signup_coins_status="CREDITED",
+            signup_coins_amount=settings.signup_bonus_coins,
+            signup_coins_credited_at=func.now(),
+            updated_at=func.now(),
+        )
+    )
+    return newly_credited
 
 
 async def _credit_referrer(
@@ -176,10 +306,16 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
 
     batch_limit = limit or settings.redash_batch_size
     rows = await _pending_rows(session, batch_limit)
+    empty = {
+        "signups_confirmed": 0,
+        "signup_coins_credited": 0,
+        "payments_confirmed": 0,
+        "coins_credited": 0,
+    }
     if not rows:
-        return {"ran": True, "checked": 0, "signups_confirmed": 0, "payments_confirmed": 0, "coins_credited": 0}
+        return {"ran": True, "checked": 0, **empty}
 
-    stats = {"ran": True, "checked": len(rows), "signups_confirmed": 0, "payments_confirmed": 0, "coins_credited": 0}
+    stats = {"ran": True, "checked": len(rows), **empty}
 
     # Step 1 — resolve every number that doesn't yet have an Eaze user id.
     unresolved = [r.phone_e164 for r in rows if not r.eaze_user_id]
@@ -208,7 +344,25 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
                 # contradict a signup our own pipeline already saw and rewarded.
                 row.signup_status = "NOT_FOUND"
 
-    # Step 2 — ask about payments for everyone we now have an Eaze id for.
+    # Step 2 — pay the signup bonus to anyone whose registration is now confirmed but who never
+    # received it. Unlike the referrer's reward this is NOT gated on payment: per the Terms, the
+    # referred person earns their coins by signing up. It's gated on the signup being real, which
+    # is what step 1 just established.
+    owed_signup = [
+        r for r in rows if r.signup_status == "SIGNED_UP" and r.signup_coins_status == "PENDING"
+    ]
+    if owed_signup:
+        async with transaction(session):
+            for row in owed_signup:
+                try:
+                    if await _credit_signup(session, row, settings):
+                        stats["signup_coins_credited"] += 1
+                except Exception:  # noqa: BLE001 - one bad row must not abort the whole pass
+                    logger.warning(
+                        "signup credit failed for %s", row.phone_e164, exc_info=True
+                    )
+
+    # Step 3 — ask about payments for everyone we now have an Eaze id for.
     payable = [r for r in rows if r.eaze_user_id and r.referrer_coins_status == "PENDING"]
     if not payable:
         await _stamp_checked(session, [r.id for r in rows])
@@ -309,10 +463,17 @@ async def verification_summary(session: AsyncSession) -> dict:
             ReferralVerification.referrer_coins_status == "PENDING",
         )
     )
+    signup_owed = await session.execute(
+        select(func.count()).select_from(ReferralVerification).where(
+            ReferralVerification.signup_status == "SIGNED_UP",
+            ReferralVerification.signup_coins_status == "PENDING",
+        )
+    )
     return {
         "referred": total.scalar_one(),
         "signed_up": signed_up.scalar_one(),
         "paid": paid.scalar_one(),
         "referrer_coins_credited": credited.scalar_one(),
         "paid_but_not_credited": awaiting.scalar_one(),
+        "signed_up_but_signup_coins_not_credited": signup_owed.scalar_one(),
     }
