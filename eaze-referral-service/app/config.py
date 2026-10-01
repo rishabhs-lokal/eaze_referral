@@ -98,10 +98,11 @@ class Settings(BaseSettings):
     # reach a real wallet; see app/services/eaze_wallet.py.
     eaze_free_coins_api_url: OptionalStr = None
     eaze_free_coins_auth_key: OptionalStr = None
-    # The header the key is sent in. Configurable because it differs per deployment of this API
-    # (the equivalent Dostt service uses x-n8n-auth-key; Eaze does not) and guessing wrong means
-    # every credit call 401s. Change this without a code change if the API expects another name.
-    eaze_free_coins_auth_header: str = "Authorization"
+    # The header the key is sent in. Confirmed against the live endpoint: anything else gets
+    # 403 {"detail":"Invalid or missing N8N API key"}. The n8n name is legacy on this shared
+    # Lokal service (the Dostt deployment uses the same one) and says nothing about Eaze's own
+    # stack. Left configurable so a rename doesn't need a code change.
+    eaze_free_coins_auth_header: str = "x-n8n-auth-key"
     # Some deployments of this endpoint want a human-readable batch label alongside the file.
     eaze_free_coins_batch_name: str = "Eaze Referral Program"
 

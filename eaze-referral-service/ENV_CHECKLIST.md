@@ -14,19 +14,33 @@ production — **never in a tracked file**. The `.env.tier-*.example` files docu
 | `REDASH_API_KEY` | Redash API key. A **user** key is safest — query keys are per-query, and there's only one slot here, so two queries with different query keys would mean one of them 403s. | `AbCd1234...` | **yes** |
 | `REDASH_BASE_URL` | Redash origin only — no path, no trailing slash. If a query lives at `https://X/queries/20610/source`, this is `X`. | `https://redash.yourcompany.com` | no |
 | `REDASH_PAYMENTS_QUERY_ID` | Numeric id of the **payments** query (user_id → successful payment count). The number in its URL. | `20611` | no |
-| `EAZE_WALLET_API_URL` | Eaze's coin-credit endpoint — where we POST to actually give someone coins. | `https://api.eaze.in/wallet/credit/` | no |
-| `EAZE_WALLET_AUTH_KEY` | Auth key for that endpoint. | `...` | **yes** |
 
-Not env vars, but still needed before the payout can be built — tell these to the engineer, they
-get written into the code, not configured:
+That's the whole outstanding list — all three are Redash. Without them nothing is ever
+confirmed, and because a confirmed payment is the only thing that releases coins, **nobody is
+ever credited**.
 
-| Thing | Why it can't be an env var |
+---
+
+## Coin dispersal — resolved
+
+| Variable | Value | Secret? |
+|---|---|---|
+| `EAZE_FREE_COINS_API_URL` | `https://api.eazeapp.com/payments/free-coins/upload/` | no |
+| `EAZE_FREE_COINS_AUTH_KEY` | set | **yes** |
+| `EAZE_FREE_COINS_AUTH_HEADER` | `x-n8n-auth-key` | no |
+
+| Thing | Answer |
 |---|---|
-| Payload shape (JSON vs CSV, single vs batched) | It's request-building code, not a value |
-| Auth **header name** (e.g. `x-n8n-auth-key`) | Same |
-| Which user id the wallet expects | Determines which id we send; wrong id space credits the wrong accounts and still returns success |
+| Payload shape | multipart form-data, field `file` = CSV `user_id,coins`, plus a `name` field |
+| Auth header | `x-n8n-auth-key` — confirmed against the live endpoint; every other name returns `403 {"detail":"Invalid or missing N8N API key"}`. Legacy name on a shared Lokal service; unrelated to whether Eaze uses n8n. |
+| Which user id | friend's from Redash, referrer's decoded from the banner link — resolved separately per side |
 
-A working `curl` for the wallet API answers all three at once, plus the URL and key.
+### Known caveat: the coin endpoint is asynchronous
+
+It replies `202 {"message":"Bulk upload started","upload_id":N}` and credits afterwards. Acceptance
+is **not** confirmation the wallet was credited — if a batch fails inside Eaze later, nothing tells
+this service, and the referral will already be marked CREDITED. The `upload_id` is logged on every
+credit so a disputed payout can be traced back to its batch.
 
 ---
 
@@ -59,7 +73,7 @@ For Kubernetes, `DATABASE_URL` goes in `k8s/tier-<n>/11-secret.yaml`, copied fro
 | Missing | Effect |
 |---|---|
 | Any `REDASH_*` | Verification and payout both dormant. `/admin/reconcile` returns `redash_not_configured`; referred numbers stay `UNCHECKED`; **nobody is ever credited**, because confirmed payment is the only thing that releases coins. |
-| `EAZE_WALLET_*` | The pipeline still decides correctly who is owed what, but no coins reach a real wallet — the balances move only in this service's own tables. |
+| `EAZE_FREE_COINS_*` | The pipeline still decides correctly who is owed what, but no coins reach a real wallet — balances move only in this service's own tables. |
 | `GOOGLE_SHEETS_*` | Sheet mirror off. Rewards are unaffected; the reconciler falls back to the database queue. |
 | `SIGNUP_BONUS_COINS` / `RECHARGE_BONUS_COINS` | App refuses to start. Deliberate. |
 

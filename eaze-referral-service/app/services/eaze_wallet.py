@@ -99,5 +99,19 @@ async def credit_coins(eaze_user_id: str, coins: int, settings: Settings) -> dic
     if reason:
         raise WalletCreditError(f"coin API reported failure: {reason}")
 
-    logger.info("credited %s coins to Eaze user %s", coins, eaze_user_id)
+    # The endpoint is ASYNCHRONOUS: it replies 202 "Bulk upload started" with an upload_id and
+    # does the actual crediting afterwards. So a success here means ACCEPTED FOR PROCESSING, not
+    # "the coins are in the wallet" — if a batch fails inside Eaze later, nothing tells us, and
+    # this service will already have recorded the side as credited.
+    #
+    # The upload_id is logged for exactly that case: it's the only handle for asking Eaze what
+    # happened to a batch someone says they never received.
+    upload_id = payload.get("upload_id") if isinstance(payload, dict) else None
+    logger.info(
+        "coin credit accepted for Eaze user %s: %s coins, upload_id=%s (async — acceptance is "
+        "not confirmation the wallet was credited)",
+        eaze_user_id,
+        coins,
+        upload_id,
+    )
     return payload if isinstance(payload, dict) else {"raw": payload}
