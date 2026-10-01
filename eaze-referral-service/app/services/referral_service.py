@@ -24,6 +24,7 @@ from app.models import (
     User,
     WalletTransaction,
 )
+from app.services import eaze_wallet
 from app.services.codes import generate_referral_code
 from app.services.db_helpers import transaction
 from app.services.phone import is_likely_fake, is_valid_indian_e164
@@ -314,11 +315,51 @@ async def recharge_webhook(
             }
 
         return {
-            "credited": True,
+            "credited": not paid["failed"],
+            "reason": (
+                f"coin_credit_failed: {', '.join(paid['failed'])}" if paid["failed"] else None
+            ),
             "referrer_user_id": referrer_user_id,
             "recharge_id": recharge_id,
             "referred_phone_e164": referred_phone,
         }
+
+
+async def _resolve_eaze_ids(
+    session: AsyncSession, referrer_user_id: int, referred_phone_e164: str
+) -> dict[str, str | None]:
+    """The two Eaze user ids a payout needs, from their two different sources.
+
+    The referrer's arrives base64-encoded in the banner link and is stored as users.external_ref;
+    the friend's is resolved from Redash and stored on the verification row. They are NOT
+    interchangeable, and sending one where the other belongs would credit the wrong account
+    while still looking like a success.
+    """
+    referrer = await session.execute(select(User.external_ref).where(User.id == referrer_user_id))
+    referred = await session.execute(
+        select(ReferralVerification.eaze_user_id).where(
+            ReferralVerification.phone_e164 == referred_phone_e164
+        )
+    )
+    return {
+        "referrer": referrer.scalar_one_or_none(),
+        "referred": referred.scalar_one_or_none(),
+    }
+
+
+async def _hand_coins_to_eaze(eaze_user_id: str | None, amount: int, settings: Settings) -> None:
+    """Credit a real Eaze wallet, unless the coin API isn't configured.
+
+    When it isn't, this is a no-op and the caller proceeds — the service then behaves as it did
+    before the integration existed: it records who is owed what, but no coins leave the building.
+    That keeps local development and the test suite working without credentials, and it is the
+    ONLY case in which a credit is recorded without a real wallet call.
+    """
+    if not eaze_wallet.is_configured(settings):
+        return
+    if not eaze_user_id:
+        raise eaze_wallet.WalletCreditError("no Eaze user id resolved for this side")
+    await eaze_wallet.credit_coins(eaze_user_id, amount, settings)
 
 
 async def credit_both_on_payment(
@@ -357,11 +398,21 @@ async def credit_both_on_payment(
     if check.scalar_one_or_none() == "ALREADY_REGISTERED":
         return {"eligible": False, "reason": "phone_already_registered", "credited": []}
 
+    # Each side is paid independently so a failure on one can't strand the other: the friend
+    # getting their coins while the referrer's call fails leaves the referrer retryable, not
+    # lost. Eaze ids are resolved per side — the friend's from Redash, the referrer's from the
+    # banner link — and a missing one means we cannot credit that side at all.
+    eaze_ids = await _resolve_eaze_ids(session, referrer_user_id, referred_phone_e164)
+
     credited: list[str] = []
+    failures: list[str] = []
     for who, wallet_user_id, amount, tx_type in (
         ("referred", referred_user_id, settings.signup_bonus_coins, "REFERRAL_SIGNUP_BONUS"),
         ("referrer", referrer_user_id, settings.recharge_bonus_coins, "REFERRAL_RECHARGE_BONUS"),
     ):
+        # The ledger row is claimed FIRST. If ON CONFLICT swallows it, this side was already
+        # paid and no API call is made — that's what stops a retry double-crediting a real
+        # wallet, which no amount of care at the HTTP layer could undo.
         ledger = await session.execute(
             pg_insert(WalletTransaction.__table__)
             .values(
@@ -374,45 +425,91 @@ async def credit_both_on_payment(
             .on_conflict_do_nothing(index_elements=["user_id", "type", "reference_id"])
             .returning(WalletTransaction.__table__.c.id)
         )
-        if ledger.first() is not None:
-            await session.execute(
-                update(User.__table__)
-                .where(User.id == wallet_user_id)
-                .values(wallet_balance=User.wallet_balance + amount)
-            )
-            credited.append(who)
+        ledger_row = ledger.first()
+        if ledger_row is None:
+            continue  # already paid
 
-    await session.execute(
-        update(Referral.__table__)
-        .where(Referral.id == referral_id)
-        .values(
-            status="REWARDED",
-            signup_rewarded_at=func.coalesce(Referral.signup_rewarded_at, func.now()),
-            recharge_rewarded_at=func.coalesce(Referral.recharge_rewarded_at, func.now()),
-            updated_at=func.now(),
+        try:
+            await _hand_coins_to_eaze(eaze_ids[who], amount, settings)
+        except eaze_wallet.WalletCreditError as exc:
+            # Undo the claim so this side is retried next pass rather than being recorded as
+            # paid when nothing reached the wallet.
+            await session.execute(
+                WalletTransaction.__table__.delete().where(
+                    WalletTransaction.__table__.c.id == ledger_row.id
+                )
+            )
+            logger.warning(
+                "coin credit failed for %s of referral %s: %s", who, referral_id, exc
+            )
+            failures.append(who)
+            continue
+
+        await session.execute(
+            update(User.__table__)
+            .where(User.id == wallet_user_id)
+            .values(wallet_balance=User.wallet_balance + amount)
         )
-    )
+        credited.append(who)
+
+    # The payment itself is confirmed regardless of whether the payout succeeded — that part is
+    # true either way, and recording it stops the payment being re-queried every pass.
     values: dict = {
         "payment_status": "PAID",
         "successful_payment_count": payment_count,
-        "signup_coins_status": "CREDITED",
-        "signup_coins_amount": settings.signup_bonus_coins,
-        "signup_coins_credited_at": func.now(),
-        "referrer_coins_status": "CREDITED",
-        "referrer_coins_amount": settings.recharge_bonus_coins,
-        "referrer_coins_credited_at": func.now(),
         "first_payment_at": func.coalesce(ReferralVerification.first_payment_at, func.now()),
         "updated_at": func.now(),
     }
     if first_payment_amount_paise is not None:
         values["first_payment_amount_paise"] = first_payment_amount_paise
+
+    # A side is only marked CREDITED when coins actually reached a wallet. Marking a failed
+    # payout as credited would be the worst outcome available here: the row would stop matching
+    # the reconciler's PENDING queue, so it would never be retried, and the user would be
+    # permanently owed coins while every dashboard reported them paid.
+    if "referred" not in failures:
+        values["signup_coins_status"] = "CREDITED"
+        values["signup_coins_amount"] = settings.signup_bonus_coins
+        values["signup_coins_credited_at"] = func.coalesce(
+            ReferralVerification.signup_coins_credited_at, func.now()
+        )
+    if "referrer" not in failures:
+        values["referrer_coins_status"] = "CREDITED"
+        values["referrer_coins_amount"] = settings.recharge_bonus_coins
+        values["referrer_coins_credited_at"] = func.coalesce(
+            ReferralVerification.referrer_coins_credited_at, func.now()
+        )
+    if failures:
+        values["last_error"] = f"coin credit failed for: {', '.join(failures)}"
+    else:
+        values["last_error"] = None
+
     await session.execute(
         update(ReferralVerification.__table__)
         .where(ReferralVerification.phone_e164 == referred_phone_e164)
         .values(**values)
     )
 
-    return {"eligible": True, "reason": None, "credited": credited}
+    # REWARDED means the referral is fully settled, so it is only set once both sides are paid.
+    # A partial payout stays SIGNED_UP and keeps showing up as outstanding work.
+    if not failures:
+        await session.execute(
+            update(Referral.__table__)
+            .where(Referral.id == referral_id)
+            .values(
+                status="REWARDED",
+                signup_rewarded_at=func.coalesce(Referral.signup_rewarded_at, func.now()),
+                recharge_rewarded_at=func.coalesce(Referral.recharge_rewarded_at, func.now()),
+                updated_at=func.now(),
+            )
+        )
+
+    return {
+        "eligible": True,
+        "reason": None,
+        "credited": credited,
+        "failed": failures,
+    }
 
 
 async def admin_funnel(session: AsyncSession) -> dict:

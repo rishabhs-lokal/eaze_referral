@@ -434,12 +434,24 @@ async def _pay_out(
         )
 
     if result["eligible"]:
+        failed = result.get("failed", [])
         await update_sheet_status(
             row.phone_e164,
             settings,
             payment="Paid",
-            friend_coins=f"Credited {settings.signup_bonus_coins}",
-            referrer_coins=f"Credited {settings.recharge_bonus_coins}",
+            # Never report a side as credited when its wallet call failed — the sheet is what
+            # people look at to answer "did they get their coins", so it has to say "failed"
+            # rather than quietly showing a payout that never happened.
+            friend_coins=(
+                "Failed — will retry"
+                if "referred" in failed
+                else f"Credited {settings.signup_bonus_coins}"
+            ),
+            referrer_coins=(
+                "Failed — will retry"
+                if "referrer" in failed
+                else f"Credited {settings.recharge_bonus_coins}"
+            ),
         )
     return result["credited"]
 

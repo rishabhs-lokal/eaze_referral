@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     # substituted into SQL, so this bounds the generated statement size.
     redash_batch_size: int = 200
 
+    # Eaze's coin-credit API — the thing that actually puts coins in a user's wallet. Unset
+    # means the reward pipeline still decides who is owed what and records it, but no coins
+    # reach a real wallet; see app/services/eaze_wallet.py.
+    eaze_free_coins_api_url: OptionalStr = None
+    eaze_free_coins_auth_key: OptionalStr = None
+    # The header the key is sent in. Configurable because it differs per deployment of this API
+    # (the equivalent Dostt service uses x-n8n-auth-key; Eaze does not) and guessing wrong means
+    # every credit call 401s. Change this without a code change if the API expects another name.
+    eaze_free_coins_auth_header: str = "Authorization"
+    # Some deployments of this endpoint want a human-readable batch label alongside the file.
+    eaze_free_coins_batch_name: str = "Eaze Referral Program"
+
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"
     app_store_url: str = "https://apps.apple.com/app/idXXXXXXXXX"
