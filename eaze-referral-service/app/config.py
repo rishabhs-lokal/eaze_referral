@@ -106,6 +106,14 @@ class Settings(BaseSettings):
     # Some deployments of this endpoint want a human-readable batch label alongside the file.
     eaze_free_coins_batch_name: str = "Eaze Referral Program"
 
+    # How often the service re-checks who has paid and credits them, in seconds. This is what
+    # makes payouts happen on their own — nothing else triggers them, because a referred person
+    # paying is an event inside Eaze that nobody tells this service about. Set to 0 to disable
+    # the loop entirely and drive POST /api/referral/admin/reconcile yourself.
+    # 15 minutes trades a little payout latency against Redash load; every pass costs two
+    # warehouse queries.
+    reconcile_interval_seconds: int = 900
+
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"
     app_store_url: str = "https://apps.apple.com/app/idXXXXXXXXX"

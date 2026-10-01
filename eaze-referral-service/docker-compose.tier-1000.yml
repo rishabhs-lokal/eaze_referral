@@ -69,6 +69,11 @@ services:
       REDASH_API_KEY: ${REDASH_API_KEY:-}
       REDASH_VERIFY_PHONE_QUERY_ID: ${REDASH_VERIFY_PHONE_QUERY_ID:-}
       REDASH_PAYMENTS_QUERY_ID: ${REDASH_PAYMENTS_QUERY_ID:-}
+      # Coin dispersal — the only thing here that moves real value to a user.
+      EAZE_FREE_COINS_API_URL: ${EAZE_FREE_COINS_API_URL:-}
+      EAZE_FREE_COINS_AUTH_KEY: ${EAZE_FREE_COINS_AUTH_KEY:-}
+      EAZE_FREE_COINS_AUTH_HEADER: ${EAZE_FREE_COINS_AUTH_HEADER:-x-n8n-auth-key}
+      RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-900}
     depends_on:
       migrate:
         condition: service_completed_successfully
