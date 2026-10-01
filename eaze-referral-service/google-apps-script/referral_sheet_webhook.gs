@@ -50,11 +50,28 @@ const COL_FRIEND_COINS = 6;
 const COL_REFERRER_COINS = 7;
 const COL_UPDATED = 8;
 
+// Writes the header row, and REPAIRS it if it no longer matches. The repair matters: an earlier
+// version of this sheet had different columns (a delivery "Status" and "Sent At"), and because
+// the original check only wrote headers to a completely empty sheet, those stale labels survived
+// a schema change — leaving the script writing verification results into a column headed
+// "Status". The data was addressed by position and so was correct, but anyone reading the sheet
+// was being misled. Row 1 only; never touches data rows.
 function setupSheet() {
   const sheet = getOrCreateSheet();
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADER_ROW);
     sheet.getRange(1, 1, 1, HEADER_ROW.length).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    return;
+  }
+
+  const current = sheet.getRange(1, 1, 1, HEADER_ROW.length).getValues()[0];
+  let stale = false;
+  for (let i = 0; i < HEADER_ROW.length; i++) {
+    if (String(current[i]).trim() !== HEADER_ROW[i]) { stale = true; break; }
+  }
+  if (stale) {
+    sheet.getRange(1, 1, 1, HEADER_ROW.length).setValues([HEADER_ROW]).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
 }
