@@ -118,6 +118,14 @@ function handleAppend(body) {
     'Pending',
     now,
   ]);
+
+  // Force the phone column to plain text. Sheets otherwise coerces "+919876543210" into the
+  // number 919876543210 and drops the plus, so the value read back no longer matches the
+  // phone_e164 the backend stores — which would silently narrow every reconcile pass to zero
+  // rows. Set after appendRow because the coercion happens on write.
+  const row = sheet.getLastRow();
+  sheet.getRange(row, COL_PHONE).setNumberFormat('@').setValue(String(body.phoneE164));
+
   return jsonResponse({ ok: true });
 }
 

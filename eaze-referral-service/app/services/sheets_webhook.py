@@ -32,20 +32,41 @@ async def _post(settings: Settings, payload: dict[str, Any], context: str) -> di
     if settings.google_sheets_webhook_secret:
         payload = {**payload, "secret": settings.google_sheets_webhook_secret}
 
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-            response = await client.post(settings.google_sheets_webhook_url, json=payload)
-        # Apps Script Web Apps always reply HTTP 200 at the transport level regardless of what
-        # the script itself considers an error — the real outcome is in the JSON body's `ok`
-        # field, not the status code, so that's what has to be checked here.
-        body = response.json()
-        if not body.get("ok", False):
-            logger.warning("Google Sheet rejected %s: %s", context, response.text)
+    # Apps Script intermittently serves a Drive HTML error page instead of running the script —
+    # seen right after deploying a new version, and occasionally afterwards. It isn't a real
+    # failure, so one retry turns a spurious miss into a success rather than a lost sheet update.
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
+                response = await client.post(settings.google_sheets_webhook_url, json=payload)
+
+            # Apps Script Web Apps always reply HTTP 200 at the transport level regardless of
+            # what the script itself considers an error — the real outcome is in the JSON
+            # body's `ok` field, not the status code, so that's what has to be checked here.
+            try:
+                body = response.json()
+            except ValueError:
+                if attempt == 1:
+                    continue
+                logger.warning(
+                    "Google Sheet returned a non-JSON response for %s (HTTP %s)",
+                    context,
+                    response.status_code,
+                )
+                return None
+
+            if not body.get("ok", False):
+                logger.warning("Google Sheet rejected %s: %s", context, response.text[:300])
+                return None
+            return body
+        except Exception:
+            if attempt == 1:
+                continue
+            logger.warning("Google Sheet %s failed", context, exc_info=True)
             return None
-        return body
-    except Exception:
-        logger.warning("Google Sheet %s failed", context, exc_info=True)
-        return None
+    return None
 
 
 async def notify_google_sheet(referrer_user_id: str, phone_e164: str, settings: Settings) -> None:

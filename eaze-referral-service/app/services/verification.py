@@ -55,6 +55,23 @@ def _parse_timestamp(value) -> dt.datetime | None:
         return None
 
 
+def _normalise_sheet_phone(value: object) -> str | None:
+    """Turn whatever the Sheet gives back into the E.164 form the database stores.
+
+    Google Sheets silently coerces a cell that looks numeric into a number, so "+919876543210"
+    comes back as the integer 919876543210 — the leading plus is simply gone. Comparing that
+    against phone_e164 matches nothing, which would narrow every reconcile pass to zero rows
+    and quietly stop all payouts. Rebuild the canonical form from the digits instead of
+    trusting the cell's type.
+    """
+    if value is None:
+        return None
+    digits = "".join(c for c in str(value) if c.isdigit())
+    if len(digits) < 10:
+        return None
+    return f"+91{digits[-10:]}"
+
+
 async def _pending_rows(
     session: AsyncSession, limit: int, phones: list[str] | None = None
 ) -> list[ReferralVerification]:
@@ -276,14 +293,26 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
     try:
         sheet_rows = await list_sheet_rows(settings)
         sheet_phones = [
-            str(r["phoneE164"]).strip() for r in sheet_rows if r.get("phoneE164")
+            p for r in sheet_rows if (p := _normalise_sheet_phone(r.get("phoneE164")))
         ]
     except Exception:  # noqa: BLE001 - the sheet is never allowed to break a payout run
         logger.warning("could not pull phone numbers from the sheet", exc_info=True)
 
-    if sheet_phones:
-        logger.info("pulled %d phone numbers from the sheet", len(sheet_phones))
     rows = await _pending_rows(session, batch_limit, phones=sheet_phones or None)
+
+    # A sheet that returned numbers but matched nothing in the database is a signal, not a
+    # result: it means the two have drifted (a renamed column, a cleared sheet, a formatting
+    # change) and narrowing to it would silently process zero referrals and pay nobody, while
+    # every log line still said the pass ran fine. Fall back to the database queue instead.
+    if sheet_phones and not rows:
+        logger.warning(
+            "sheet returned %d numbers but none matched a pending referral — falling back to "
+            "the database queue",
+            len(sheet_phones),
+        )
+        rows = await _pending_rows(session, batch_limit)
+    elif sheet_phones:
+        logger.info("pulled %d phone numbers from the sheet", len(sheet_phones))
     empty = {
         "pulled_from_sheet": len(sheet_phones),
         "signups_confirmed": 0,
