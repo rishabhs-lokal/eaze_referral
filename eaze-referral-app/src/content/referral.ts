@@ -127,7 +127,11 @@ export function buildShareMessage(params: { shareUrl: string }): string {
   const { shareUrl } = params;
   return [
     "I'm on Eaze 🎉 and it's worth your first recharge.",
-    `💰 Download the app and get ${REWARD_COINS} coins to start: ${shareUrl}`,
+    // "when you do" points back at the recharge in the line above. It used to read "coins to
+    // start", which promised coins on signing up — true when this was written, wrong since the
+    // reward moved behind a confirmed payment. This is the message people actually paste to a
+    // friend, so it sets the expectation long before anyone opens the Terms.
+    `💰 Download the app and get ${REWARD_COINS} coins when you do: ${shareUrl}`,
     // Blank line between the two sentences — this is the literal string that gets copied
     // and shared, so the spacing carries over wherever it's pasted, not just in-app.
   ].join('\n\n');
