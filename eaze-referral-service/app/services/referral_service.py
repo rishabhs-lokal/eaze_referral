@@ -118,14 +118,24 @@ async def get_or_create_referral_code(session: AsyncSession, user: User) -> str:
 
 
 async def submit_intents(
-    session: AsyncSession, referrer: User, phone_numbers: list[str]
+    session: AsyncSession,
+    referrer: User,
+    phone_numbers: list[str],
+    eaze_registered: set[str] | None = None,
 ) -> tuple[int, list[dict]]:
     """A number is only ever accepted into referral_intents when it doesn't already exist
     there (enforced below AND by the table's own UNIQUE constraint as a second line of
     defense — see referral_intents_phone_e164_key) and isn't already a registered Eaze user
     — the referral bonus never applies to someone already on Eaze (see the Eligibility
     section of the Terms), so accepting that number here would create a referral that can
-    never be rewarded."""
+    never be rewarded.
+
+    `eaze_registered` is the same verdict reached against Eaze's real user base rather than this
+    service's own tables — see verification.check_phones_registered, which the router runs
+    before calling this. Both produce the identical `already_registered` reason on purpose: to
+    the referrer it is one situation ("your friend is already on Eaze"), and the caller should
+    not have to care which source established it.
+    """
     saved = 0
     skipped: list[dict] = []
 
@@ -135,6 +145,7 @@ async def submit_intents(
             select(User.phone_e164).where(User.phone_e164.in_(valid_phones))
         )
         already_registered_phones = {row[0] for row in registered_result.all()}
+        already_registered_phones |= eaze_registered or set()
 
         for phone in phone_numbers:
             if not is_valid_indian_e164(phone):

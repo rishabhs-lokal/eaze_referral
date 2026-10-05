@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # How many phone numbers / user ids to pack into one Redash query. Redash parameters are
     # substituted into SQL, so this bounds the generated statement size.
     redash_batch_size: int = 200
+    # How long POST /api/referral/intents will wait for the "is this already an Eaze user?"
+    # check before saving anyway. Spent inside a request the user is waiting on, so it trades
+    # the chance to warn them immediately against how long Save can hang. Exceeding it is not
+    # an error — the number saves and the background check still runs.
+    phone_check_timeout_seconds: float = 8.0
 
     # Eaze's coin-credit API — the thing that actually puts coins in a user's wallet. Unset
     # means the reward pipeline still decides who is owed what and records it, but no coins

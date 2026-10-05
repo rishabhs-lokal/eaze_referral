@@ -106,6 +106,18 @@ export const popupCopy = {
     ],
     primaryLabel: 'Fix it',
   },
+  alreadyRegistered: {
+    eyebrow: 'Already on Eaze',
+    title: 'That number has an Eaze account',
+    // Deliberately specific about WHY, because the alternative reads as a bug: the referrer
+    // typed a valid number, pressed Save, and nothing was saved. Naming the numbers lets them
+    // see at a glance which one to replace when they entered several.
+    bullets: [
+      'The referral bonus is only for people new to Eaze, so this number was not saved.',
+      'Try a friend who has not used Eaze before.',
+    ],
+    primaryLabel: 'Use a different number',
+  },
   exitReminder: {
     eyebrow: "Don't leave yet",
     title: `Your friend could earn ${REWARD_COINS} coins`,

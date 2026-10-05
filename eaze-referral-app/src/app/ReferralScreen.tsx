@@ -72,6 +72,8 @@ export function ReferralScreen() {
   const [hasSavedNumbers, setHasSavedNumbers] = useState(false);
   const [showNeedsNumberPopup, setShowNeedsNumberPopup] = useState(false);
   const [showInvalidNumberPopup, setShowInvalidNumberPopup] = useState(false);
+  const [showAlreadyRegisteredPopup, setShowAlreadyRegisteredPopup] = useState(false);
+  const [alreadyRegisteredNumbers, setAlreadyRegisteredNumbers] = useState<string[]>([]);
   const [showExitPopup, setShowExitPopup] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
 
@@ -139,14 +141,32 @@ export function ReferralScreen() {
 
     setSubmitting(true);
     try {
-      await submitReferralIntents({
+      const result = await submitReferralIntents({
         referrerUserId: referrerId,
         phoneNumbersE164: fields.map((f) => toE164(f.local)),
       });
-      setHasSavedNumbers(true);
-      showToast('success', referralCopy.submitSuccessToast);
-      setFields([{ id: ++nextFieldId.current, local: '', valid: false }]);
-      setAttemptedSubmit(false);
+
+      // The backend checks each number against Eaze's real user base before saving. A number
+      // that already has an account can never earn anyone coins, so it isn't saved — and
+      // saying so here is the only chance the referrer gets to use a different number. Without
+      // this they'd see a success toast for numbers that were silently dropped.
+      const alreadyOnEaze = result.skipped
+        .filter((s) => s.reason === 'already_registered')
+        .map((s) => s.phone);
+
+      if (alreadyOnEaze.length > 0) {
+        setAlreadyRegisteredNumbers(alreadyOnEaze);
+        setShowAlreadyRegisteredPopup(true);
+      }
+
+      // Anything that did save is still a success, even if a sibling number was rejected —
+      // only clear the fields and congratulate them when something actually landed.
+      if (result.saved > 0) {
+        setHasSavedNumbers(true);
+        showToast('success', referralCopy.submitSuccessToast);
+        setFields([{ id: ++nextFieldId.current, local: '', valid: false }]);
+        setAttemptedSubmit(false);
+      }
     } catch {
       showToast('error', referralCopy.submitFailedToast);
     } finally {
@@ -314,6 +334,21 @@ export function ReferralScreen() {
         primaryLabel={popupCopy.invalidNumber.primaryLabel}
         onPrimary={() => {
           setShowInvalidNumberPopup(false);
+          scrollToPhoneSection();
+        }}
+      />
+
+      <Popup
+        visible={showAlreadyRegisteredPopup}
+        onClose={() => setShowAlreadyRegisteredPopup(false)}
+        eyebrow={popupCopy.alreadyRegistered.eyebrow}
+        title={popupCopy.alreadyRegistered.title}
+        // The rejected numbers lead, so a referrer who entered several can see at a glance
+        // which one to replace.
+        bullets={[alreadyRegisteredNumbers.join(', '), ...popupCopy.alreadyRegistered.bullets]}
+        primaryLabel={popupCopy.alreadyRegistered.primaryLabel}
+        onPrimary={() => {
+          setShowAlreadyRegisteredPopup(false);
           scrollToPhoneSection();
         }}
       />

@@ -25,6 +25,7 @@ Design rules, all of which matter because this moves money:
     reversal is a deliberate, separate decision, not something a background sweep should do.
 """
 
+import asyncio
 import datetime as dt
 import logging
 
@@ -201,6 +202,46 @@ async def _ensure_referral(
         .values(status="MATCHED", matched_user_id=referred_user_id, matched_at=func.now())
     )
     return created_row.id
+
+
+async def check_phones_registered(
+    phones: list[str], settings: Settings
+) -> set[str]:
+    """Which of these numbers already belong to an Eaze account, answered in time to tell the
+    user at the moment they press Save.
+
+    This runs INSIDE the submit request, unlike verify_submitted_phone below which runs after
+    it. The difference is the whole point: a referrer who types a number that's already on Eaze
+    should be told immediately, not discover weeks later that no coins ever came.
+
+    Bounded by phone_check_timeout_seconds, because Redash job polling has no useful upper
+    bound and a Save button that hangs is worse than a slightly late answer. On timeout — or any
+    error, or Redash being unconfigured — this returns an empty set, meaning "nothing known to
+    be registered". The numbers are still saved and the background check plus the reconciler
+    catch them later; the user just doesn't get the popup. Failing this way round matters: the
+    alternative is blocking a legitimate referral because a dashboard was slow.
+    """
+    if not phones or not redash.is_configured(settings) or not settings.redash_verify_phone_query_id:
+        return set()
+
+    try:
+        matches = await asyncio.wait_for(
+            _resolve_eaze_user_ids(settings, phones),
+            timeout=settings.phone_check_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.info(
+            "save-time phone check timed out after %ss for %d number(s); the background check "
+            "will still run",
+            settings.phone_check_timeout_seconds,
+            len(phones),
+        )
+        return set()
+    except redash.RedashError as exc:
+        logger.warning("save-time phone check failed: %s", exc)
+        return set()
+
+    return {phone for phone, row in matches.items() if row.get("user_id") is not None}
 
 
 async def verify_submitted_phone(phone_e164: str, settings: Settings) -> None:
