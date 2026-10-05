@@ -124,14 +124,35 @@ async def _resolve_eaze_user_ids(
     return resolved
 
 
-async def _fetch_payments(settings: Settings, user_ids: list[str]) -> dict[str, dict]:
-    """Query 2 — real payment facts per Eaze user id. Returns {user_id: row}."""
+async def _fetch_payments(settings: Settings, phones: list[str]) -> dict[str, dict]:
+    """Query 2 — real payment facts, keyed on phone number. Returns {phone_e164: row}.
+
+    Keyed on the phone rather than the Eaze user id on purpose: the two queries then agree on
+    one identifier that both sides normalise the same way, instead of query 2 having to trust
+    that query 1 returned an id from the space it filters on. A mismatch there would return
+    zero rows forever and look exactly like "nobody has paid".
+
+    Rows whose number maps to more than one Eaze account are dropped. Which account earned the
+    referral is genuinely ambiguous in that case, and guessing would credit a stranger.
+    """
     rows = await redash.run_query(
         settings,
         settings.redash_payments_query_id,
-        {"user_ids": ",".join(user_ids)},
+        {"mobile_numbers": ",".join(phones)},
     )
-    return {str(row.get("user_id")): row for row in rows if row.get("user_id") is not None}
+    by_phone: dict[str, dict] = {}
+    for row in rows:
+        if int(row.get("accounts_for_number") or 1) > 1:
+            logger.warning(
+                "skipping %s — maps to %s Eaze accounts, cannot tell which earned the referral",
+                row.get("mobile_no"),
+                row.get("accounts_for_number"),
+            )
+            continue
+        phone = _normalise_sheet_phone(row.get("mobile_key") or row.get("mobile_no"))
+        if phone:
+            by_phone[phone] = row
+    return by_phone
 
 
 async def _ensure_local_user(session: AsyncSession, phone_e164: str) -> int:
@@ -431,7 +452,7 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
         return stats
 
     try:
-        payments = await _fetch_payments(settings, [r.eaze_user_id for r in payable])
+        payments = await _fetch_payments(settings, [r.phone_e164 for r in payable])
     except redash.RedashError as exc:
         logger.warning("Redash payment lookup failed: %s", exc)
         await _record_error(session, [r.id for r in payable], str(exc))
@@ -439,8 +460,30 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
 
     async with transaction(session):
         for row in payable:
-            payment = payments.get(row.eaze_user_id)
+            payment = payments.get(row.phone_e164)
             paid_count = int(payment.get("successful_payment_count") or 0) if payment else 0
+
+            # The payments query returns an account's registration time so the cutoff can be
+            # applied here rather than baked into the SQL. An account created BEFORE the
+            # referral was made cannot have been caused by it — the Terms exclude existing
+            # users — so it never earns coins however much it later pays. This is the same
+            # verdict the save-time check reaches, re-derived at payout so a check that timed
+            # out can't let a pre-existing account through.
+            registered_at = _parse_timestamp(payment.get("registered_at")) if payment else None
+            if registered_at and row.created_at and registered_at < row.created_at:
+                if row.phone_check_status != "ALREADY_REGISTERED":
+                    row.phone_check_status = "ALREADY_REGISTERED"
+                    row.pre_existing_eaze_user_id = str(payment.get("user_id"))
+                    row.phone_checked_at = dt.datetime.now(dt.timezone.utc)
+                    stats["disqualified_already_registered"] += 1
+                    logger.info(
+                        "disqualified %s at payout — account registered %s, before the "
+                        "referral at %s",
+                        row.phone_e164,
+                        registered_at,
+                        row.created_at,
+                    )
+                continue
 
             if paid_count <= 0:
                 # Confirmed no payment yet. Nobody is owed anything — this is the check

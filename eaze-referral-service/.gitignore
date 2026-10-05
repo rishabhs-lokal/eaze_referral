@@ -5,3 +5,7 @@ venv/
 .env
 .pytest_cache/
 k8s/tier-*/11-secret.yaml
+
+# Local-only compose overrides. These get real credentials pasted into them during testing and
+# must never reach git — a real Redash key was one `git add -A` away from being committed once.
+docker-compose.*-override.yml

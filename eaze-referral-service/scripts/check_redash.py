@@ -29,8 +29,15 @@ from app.services import redash
 # the pipeline, so they're checked explicitly rather than discovered at runtime.
 PHONE_QUERY_REQUIRED = ["user_id", "mobile_no"]
 PHONE_QUERY_OPTIONAL = ["registered_at"]
-PAYMENT_QUERY_REQUIRED = ["user_id", "successful_payment_count"]
-PAYMENT_QUERY_OPTIONAL = ["first_payment_at", "first_payment_amount_paise"]
+PAYMENT_QUERY_REQUIRED = ["successful_payment_count", "accounts_for_number"]
+PAYMENT_QUERY_OPTIONAL = [
+    "user_id",
+    "mobile_key",
+    "mobile_no",
+    "registered_at",
+    "first_payment_at",
+    "first_payment_amount_paise",
+]
 
 PASS = "  PASS"
 FAIL = "  FAIL"
@@ -135,11 +142,13 @@ async def main(raw_phone: str) -> int:
 
     print()
     print("=" * 72)
-    print(f"QUERY 2 — payments for user_id {user_id}")
+    print(f"QUERY 2 — payments, keyed on the phone (not the user id)")
     print("=" * 72)
     try:
         pay_rows = await redash.run_query(
-            settings, settings.redash_payments_query_id, {"user_ids": str(user_id)}
+            settings,
+            settings.redash_payments_query_id,
+            {"mobile_numbers": variants["E.164 (what the service sends)"]},
         )
     except redash.RedashError as exc:
         print(f"{FAIL} query errored: {exc}")

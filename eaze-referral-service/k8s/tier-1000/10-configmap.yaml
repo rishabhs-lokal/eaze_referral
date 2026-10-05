@@ -21,3 +21,22 @@ data:
   # count and the database's max_connections.
   DB_POOL_SIZE: "5"
   DB_POOL_MAX_OVERFLOW: "5"
+  # --- Verification and payout. The non-secret half; keys live in the Secret. ---
+  # Redash is where this service confirms against Eaze's real data that a referred person
+  # registered and actually paid. Both query ids are required: 20610 answers "is this number
+  # already an Eaze account" at save time, the payments query answers "have they paid".
+  REDASH_BASE_URL: "https://analytics.getlokalapp.com"
+  REDASH_VERIFY_PHONE_QUERY_ID: "20610"
+  REDASH_PAYMENTS_QUERY_ID: "20649"
+  # How long POST /intents waits for the save-time "already an Eaze user" check before saving
+  # anyway. Exceeding it is not an error — the background check still runs.
+  PHONE_CHECK_TIMEOUT_SECONDS: "8"
+  # How often the service re-checks who has paid and credits them. This is what makes payouts
+  # happen on their own; 0 disables the loop entirely.
+  RECONCILE_INTERVAL_SECONDS: "900"
+  # Eaze's coin-credit endpoint. The auth key is in the Secret.
+  EAZE_FREE_COINS_API_URL: "https://api.eazeapp.com/payments/free-coins/upload/"
+  EAZE_FREE_COINS_AUTH_HEADER: "x-n8n-auth-key"
+  # Optional human-readable mirror of the pipeline into a Google Sheet. URL is not a secret;
+  # the shared secret that authenticates to it is.
+  GOOGLE_SHEETS_WEBHOOK_URL: ""
