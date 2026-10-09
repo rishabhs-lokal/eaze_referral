@@ -58,6 +58,9 @@ export const referralCopy = {
   consentLabel:
     "By adding this number, you confirm you have your friend's permission to share it with Eaze. You also acknowledge and accept the {{terms}} governing the User Referral Programme.",
   consentTermsLinkLabel: 'Terms & Conditions',
+  // Two messages, because the referrer can hit the gate at two different moments and each one
+  // needs to name the next action: tapping a locked field, or pressing Save with nothing ticked.
+  consentFirstToast: 'Tick the declaration below to add a number',
   consentRequiredToast: 'Please confirm the declaration before saving',
 };
 

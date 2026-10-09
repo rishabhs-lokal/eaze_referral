@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, white, spacing, type, fontFamily } from '../theme';
@@ -20,7 +21,7 @@ import { TextButton } from '../components/TextButton';
 import { Toast } from '../components/Toast';
 import { Popup } from '../components/Popup';
 import { TermsScreen } from '../components/TermsScreen';
-import { referralCopy, popupCopy, buildShareMessage } from '../content/referral';
+import { referralCopy, popupCopy, buildShareMessage, DOWNLOAD_URL } from '../content/referral';
 import { copyToClipboard } from '../platform/clipboard';
 import { useReferrerId } from '../state/useReferrerId';
 import { useToast } from '../state/useToast';
@@ -48,9 +49,28 @@ function exitScreen() {
 // like a native mobile card instead of stretching edge to edge.
 const MAX_CONTENT_WIDTH = 480;
 
+// The headline has to hold one line. Measured in-browser, "Invite a friend, earn coins" set in
+// Fraunces SemiBold costs ~12.4px of width per 1px of font size (395px at 32px), and the hero
+// gets the viewport minus screenPadding on each side, capped at MAX_CONTENT_WIDTH. Picking a
+// fixed size instead would mean choosing between wrapping on a 360dp phone and looking shrunken
+// on everything wider, so it steps down only as far as the width actually forces.
+const HEADLINE_WIDTH_PER_FONT_PX = 12.4;
+const HEADLINE_SIZES = [32, 28, 24, 20];
+
+function headlineTypeFor(viewportWidth: number) {
+  const available = Math.min(viewportWidth, MAX_CONTENT_WIDTH) - spacing.screenPadding * 2;
+  const fontSize =
+    HEADLINE_SIZES.find((size) => size * HEADLINE_WIDTH_PER_FONT_PX <= available) ??
+    HEADLINE_SIZES[HEADLINE_SIZES.length - 1];
+  // 36/32 — headline1's own ratio, so the hero keeps its proportions at every step.
+  return { fontSize, lineHeight: Math.round(fontSize * 1.125) };
+}
+
 type PhoneField = { id: number; local: string; valid: boolean };
 
 export function ReferralScreen() {
+  const { width: viewportWidth } = useWindowDimensions();
+  const headlineType = headlineTypeFor(viewportWidth);
   const referrerStatus = useReferrerId();
   const referrerId = referrerStatus.status === 'ready' ? referrerStatus.userId : null;
   const { toast, showToast } = useToast();
@@ -112,6 +132,14 @@ export function ReferralScreen() {
     // Best-effort — the click count matters, but it should never block or fail the copy itself.
     logMessageCopy(referrerId).catch(() => {});
   }, [referralCode, referrerId, showToast, hasSavedNumbers]);
+
+  // Consent comes first: until the declaration is ticked there is nothing to type a number
+  // into. Silence would read as a broken field, so every blocked touch says why and points at
+  // the checkbox that unblocks it.
+  const notifyConsentFirst = useCallback(() => {
+    setShowConsentError(true);
+    showToast('error', referralCopy.consentFirstToast);
+  }, [showToast]);
 
   const updateField = (id: number, local: string) => {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, local } : f)));
@@ -259,7 +287,9 @@ export function ReferralScreen() {
 
           <View style={styles.hero}>
             <Text style={styles.eyebrow}>{referralCopy.eyebrow}</Text>
-            <Text style={styles.headline}>{referralCopy.headline}</Text>
+            <Text style={[styles.headline, headlineType]} numberOfLines={1} adjustsFontSizeToFit>
+              {referralCopy.headline}
+            </Text>
             <Text style={styles.body}>{referralCopy.body}</Text>
           </View>
 
@@ -278,6 +308,8 @@ export function ReferralScreen() {
                   onValidityChange={(valid) => setFieldValidity(field.id, valid)}
                   showErrorWhenEmpty={attemptedSubmit}
                   required
+                  locked={!consentGiven}
+                  onLockedPress={notifyConsentFirst}
                   rightAccessory={
                     fields.length > 1 ? (
                       <TextButton label={referralCopy.removeNumber} tone="error" onPress={() => removeField(field.id)} />
@@ -300,7 +332,10 @@ export function ReferralScreen() {
             />
 
             {fields.length < referralCopy.maxPhoneFields && (
-              <TextButton label={referralCopy.addAnotherNumber} onPress={addField} />
+              <TextButton
+                label={referralCopy.addAnotherNumber}
+                onPress={consentGiven ? addField : notifyConsentFirst}
+              />
             )}
 
             <PrimaryButton label={referralCopy.submitButton} onPress={handleSubmit} loading={submitting} />
@@ -319,6 +354,7 @@ export function ReferralScreen() {
             <CopyableMessageCard
               label={referralCopy.messageCardLabel}
               message={buildShareMessage()}
+              linkUrl={DOWNLOAD_URL}
               copyButtonLabel={referralCopy.copyButton}
               onCopy={handleCopy}
             />

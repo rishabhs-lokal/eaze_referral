@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, white, radius, type, fontFamily } from '../theme';
 import {
   isLikelyFakeIndianMobileLocal,
@@ -19,6 +19,10 @@ type Props = {
   // discovered underneath one already entered. Only the first field passes it — repeating the
   // same caveat under every field would be noise.
   note?: string;
+  // Locked until the referrer has consented. A disabled field alone would read as a bug, so
+  // every touch on it reports WHY via onLockedPress rather than doing nothing.
+  locked?: boolean;
+  onLockedPress?: () => void;
   testID?: string;
 };
 
@@ -34,6 +38,8 @@ export function PhoneNumberField({
   required = false,
   rightAccessory,
   note,
+  locked = false,
+  onLockedPress,
   testID,
 }: Props) {
   const [touched, setTouched] = useState(false);
@@ -45,7 +51,10 @@ export function PhoneNumberField({
   const isCorrectFormat = isFormatValid && !isFake;
   // An optional field left untouched is not an error — nothing to submit, nothing wrong.
   const isValid = required ? isCorrectFormat : isEmpty || isCorrectFormat;
-  const showError = (touched || showErrorWhenEmpty) && ((isEmpty && required) || (isComplete && !isCorrectFormat));
+  // A locked field is never "wrong" — the referrer hasn't been allowed to fill it yet, so
+  // flagging it as missing would blame them for the gate.
+  const showError =
+    !locked && (touched || showErrorWhenEmpty) && ((isEmpty && required) || (isComplete && !isCorrectFormat));
 
   React.useEffect(() => {
     onValidityChange?.(isValid);
@@ -62,11 +71,27 @@ export function PhoneNumberField({
         {rightAccessory}
       </View>
       {note ? <Text style={styles.note}>{note}</Text> : null}
-      <View style={[styles.inputRow, showError && styles.inputRowError]}>
+      {/* The Pressable is the whole point of the locked state: an inert greyed-out box tells the
+          referrer nothing, so tapping it has to say why it's inert. With editable={false} the
+          TextInput ignores the touch and it lands here instead. */}
+      <Pressable
+        onPress={locked ? onLockedPress : undefined}
+        disabled={!locked}
+        // On web a Pressable is focusable by default and draws a focus ring, which on a locked
+        // field reads as "this input is active, type here" — the exact opposite of the state.
+        // The checkbox immediately below is the real keyboard target, and it carries the same
+        // error, so nothing is lost by taking this out of the tab order.
+        focusable={false}
+        style={[styles.inputRow, showError && styles.inputRowError, locked && styles.inputRowLocked]}
+      >
         <View style={styles.prefix}>
           <Text style={styles.prefixText}>+91</Text>
         </View>
         <View style={styles.divider} />
+        {/* readOnly is not disabled: the input still takes focus on click and draws a focus ring,
+            which makes a locked field look live. Killing pointer events is what actually sends
+            the touch past it to the Pressable above. */}
+        <View style={styles.inputHost} pointerEvents={locked ? 'none' : 'auto'}>
         <TextInput
           testID={testID}
           value={value}
@@ -76,10 +101,15 @@ export function PhoneNumberField({
           placeholderTextColor={white[40]}
           keyboardType="number-pad"
           maxLength={10}
+          editable={!locked}
           style={styles.input}
           accessibilityLabel={label}
+          accessibilityState={{ disabled: locked }}
+          // Stops the browser/OS focusing a field that cannot be typed into.
+          focusable={!locked}
         />
-      </View>
+        </View>
+      </Pressable>
       {showError && (
         <Text style={styles.errorText}>
           {isEmpty
@@ -127,6 +157,11 @@ const styles = StyleSheet.create({
   inputRowError: {
     borderColor: colors.error[500],
   },
+  inputRowLocked: {
+    // Visibly inert — dimmer fill than the normal white[10] so it does not look like a field
+    // simply waiting for a tap.
+    opacity: 0.45,
+  },
   prefix: {
     paddingLeft: 16,
     paddingRight: 8,
@@ -139,6 +174,10 @@ const styles = StyleSheet.create({
     width: 1,
     height: 24,
     backgroundColor: white[20],
+  },
+  inputHost: {
+    flex: 1,
+    height: '100%',
   },
   input: {
     flex: 1,
