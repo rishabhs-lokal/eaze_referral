@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { colors, white, radius, type } from '../theme';
+import { colors, white, radius, type, fontFamily } from '../theme';
 import {
   isLikelyFakeIndianMobileLocal,
   isValidIndianMobileLocal,
@@ -15,6 +15,10 @@ type Props = {
   showErrorWhenEmpty?: boolean; // set true after a submit attempt, to surface "required"
   required?: boolean; // only the first field is a hard requirement — see ReferralScreen
   rightAccessory?: React.ReactNode; // e.g. a "Remove" text button, inline with the label
+  // Shown between the label and the input, so it is read before a number is typed rather than
+  // discovered underneath one already entered. Only the first field passes it — repeating the
+  // same caveat under every field would be noise.
+  note?: string;
   testID?: string;
 };
 
@@ -29,6 +33,7 @@ export function PhoneNumberField({
   showErrorWhenEmpty,
   required = false,
   rightAccessory,
+  note,
   testID,
 }: Props) {
   const [touched, setTouched] = useState(false);
@@ -56,6 +61,7 @@ export function PhoneNumberField({
         </Text>
         {rightAccessory}
       </View>
+      {note ? <Text style={styles.note}>{note}</Text> : null}
       <View style={[styles.inputRow, showError && styles.inputRowError]}>
         <View style={styles.prefix}>
           <Text style={styles.prefixText}>+91</Text>
@@ -102,6 +108,12 @@ const styles = StyleSheet.create({
   },
   required: {
     color: colors.error[500],
+  },
+  note: {
+    ...type.body4,
+    fontFamily: fontFamily.bodyItalic,
+    color: white[50],
+    marginTop: -2,
   },
   inputRow: {
     height: 48,

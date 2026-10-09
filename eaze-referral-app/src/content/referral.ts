@@ -1,6 +1,17 @@
 // Copy rules from Eaze_design_handbook.md §4: sentence case, no exclamation marks,
 // specific over hype, numbers read first.
 
+// The download link pasted into the invite message. A OneLink, so one URL resolves to the right
+// store for whatever device the friend opens it on.
+//
+// This replaced the backend's own /r/{code} redirect, which logged a click per visit into
+// referral_clicks. Nothing about the reward depends on the link — attribution is phone-only, and
+// the friend never enters a code — so swapping it changes no payout behaviour. What it does cost
+// is click analytics: referral_clicks will stop receiving rows, and the share-to-install funnel
+// becomes OneLink's to report rather than ours.
+export const DOWNLOAD_URL =
+  process.env.EXPO_PUBLIC_DOWNLOAD_URL ?? 'https://eaze.onelink.me/x8qY/eirps9xf';
+
 // EXPO_PUBLIC_* vars are inlined at build time — this is what makes the 1000-coin and 500-coin
 // builds of this exact same codebase (see docker-compose.tier-*.yml / k8s/tier-*/ on the backend)
 // show the right number without a code fork. There is no default/un-tiered build and therefore
@@ -35,8 +46,19 @@ export const referralCopy = {
   backButtonLabel: 'Go back',
   termsButtonLabel: 'Terms and Conditions',
   termsTitle: 'Terms and Conditions',
+  // Sits between the "Friend's Phone Number" label and the input, so it is read before a number
+  // is typed rather than after.
   phoneDisclaimer:
-    "Note: a phone number already referred by another user cannot be claimed again and will not be rewarded. By submitting a number, you acknowledge and accept the Terms and Conditions governing this referral program.",
+    'Note: a phone number already referred by another user cannot be claimed again and will not be rewarded.',
+
+  // The consent gate below the input. Must be ticked before anything can be saved — the
+  // referrer is sharing someone else's phone number with Eaze, and that is their consent to
+  // confirm, not something to infer from a button press. {{terms}} is rendered as an inline
+  // link so the document is reachable from the sentence that references it.
+  consentLabel:
+    "By adding this number, you confirm you have your friend's permission to share it with Eaze. You also acknowledge and accept the {{terms}} governing the User Referral Programme.",
+  consentTermsLinkLabel: 'Terms & Conditions',
+  consentRequiredToast: 'Please confirm the declaration before saving',
 };
 
 // Terms and Conditions — same section pattern as eaze-level-up's TERMS_SECTIONS /
@@ -130,20 +152,18 @@ export const popupCopy = {
   },
 };
 
-// `shareUrl` is a redirect (e.g. https://l.eaze.app/r/EAZE-XXXX) that logs the click server-side
-// for funnel visibility, then forwards to the Play Store or App Store based on the visitor's
-// device. It's just the download link now — attribution doesn't depend on it or on any code the
-// friend would need to enter. The referrer already told us this friend's number; that's the
-// entire attribution mechanism (see signup-match in eaze-referral-backend).
-export function buildShareMessage(params: { shareUrl: string }): string {
-  const { shareUrl } = params;
+// Every referrer shares the same DOWNLOAD_URL — nothing about the reward is carried in the
+// link. Attribution is phone-only: the referrer already told us their friend's number, and
+// that is the entire mechanism (see signup-match in eaze-referral-service). The friend enters
+// no code and the link identifies nobody.
+export function buildShareMessage(): string {
   return [
     "I'm on Eaze 🎉 and it's worth your first recharge.",
     // "when you do" points back at the recharge in the line above. It used to read "coins to
     // start", which promised coins on signing up — true when this was written, wrong since the
     // reward moved behind a confirmed payment. This is the message people actually paste to a
     // friend, so it sets the expectation long before anyone opens the Terms.
-    `💰 Download the app and get ${REWARD_COINS} coins when you do: ${shareUrl}`,
+    `💰 Download the app and get ${REWARD_COINS} coins when you do: ${DOWNLOAD_URL}`,
     // Blank line between the two sentences — this is the literal string that gets copied
     // and shared, so the spacing carries over wherever it's pasted, not just in-app.
   ].join('\n\n');

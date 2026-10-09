@@ -14,6 +14,7 @@ import { EazeLogo } from '../components/EazeLogo';
 import { GradientBackground } from '../components/GradientBackground';
 import { CopyableMessageCard } from '../components/CopyableMessageCard';
 import { PhoneNumberField } from '../components/PhoneNumberField';
+import { ConsentCheckbox } from '../components/ConsentCheckbox';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { TextButton } from '../components/TextButton';
 import { Toast } from '../components/Toast';
@@ -72,6 +73,8 @@ export function ReferralScreen() {
   const [hasSavedNumbers, setHasSavedNumbers] = useState(false);
   const [showNeedsNumberPopup, setShowNeedsNumberPopup] = useState(false);
   const [showInvalidNumberPopup, setShowInvalidNumberPopup] = useState(false);
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [showConsentError, setShowConsentError] = useState(false);
   const [showAlreadyRegisteredPopup, setShowAlreadyRegisteredPopup] = useState(false);
   const [alreadyRegisteredNumbers, setAlreadyRegisteredNumbers] = useState<string[]>([]);
   const [showExitPopup, setShowExitPopup] = useState(false);
@@ -103,7 +106,7 @@ export function ReferralScreen() {
       setShowNeedsNumberPopup(true);
       return;
     }
-    const message = buildShareMessage({ shareUrl: referralCode.shareUrl });
+    const message = buildShareMessage();
     const ok = await copyToClipboard(message);
     showToast(ok ? 'success' : 'error', ok ? referralCopy.copiedToast : referralCopy.copyFailedToast);
     // Best-effort — the click count matters, but it should never block or fail the copy itself.
@@ -131,6 +134,16 @@ export function ReferralScreen() {
   const handleSubmit = async () => {
     if (!referrerId) return;
     setAttemptedSubmit(true);
+
+    // The declaration gates everything. Checked before format validation so a referrer who has
+    // not consented is told that first, rather than being walked through fixing a number for a
+    // submission that was never going to be allowed.
+    if (!consentGiven) {
+      setShowConsentError(true);
+      showToast('error', referralCopy.consentRequiredToast);
+      return;
+    }
+
     // Every visible field is mandatory now (one by default; any extra ones only exist
     // because the user tapped "Add another number") — fill it in or remove it.
     const allValid = fields.every((f) => f.valid);
@@ -258,7 +271,8 @@ export function ReferralScreen() {
               {fields.map((field, index) => (
                 <PhoneNumberField
                   key={field.id}
-                  label={index === 0 ? "Friend's phone number" : `Friend's phone number ${index + 1}`}
+                  label={index === 0 ? "Friend's Phone Number" : `Friend's Phone Number ${index + 1}`}
+                  note={index === 0 ? referralCopy.phoneDisclaimer : undefined}
                   value={field.local}
                   onChangeValue={(local) => updateField(field.id, local)}
                   onValidityChange={(valid) => setFieldValidity(field.id, valid)}
@@ -273,7 +287,17 @@ export function ReferralScreen() {
               ))}
             </View>
 
-            <Text style={styles.phoneDisclaimer}>{referralCopy.phoneDisclaimer}</Text>
+            <ConsentCheckbox
+              checked={consentGiven}
+              onChange={(next) => {
+                setConsentGiven(next);
+                if (next) setShowConsentError(false);
+              }}
+              label={referralCopy.consentLabel}
+              termsLabel={referralCopy.consentTermsLinkLabel}
+              onPressTerms={() => setShowTerms(true)}
+              showError={showConsentError}
+            />
 
             {fields.length < referralCopy.maxPhoneFields && (
               <TextButton label={referralCopy.addAnotherNumber} onPress={addField} />
@@ -294,14 +318,19 @@ export function ReferralScreen() {
           ) : referralCode ? (
             <CopyableMessageCard
               label={referralCopy.messageCardLabel}
-              message={buildShareMessage({ shareUrl: referralCode.shareUrl })}
+              message={buildShareMessage()}
               copyButtonLabel={referralCopy.copyButton}
               onCopy={handleCopy}
             />
           ) : null}
 
           <View style={styles.termsRow}>
-            <TextButton label={referralCopy.termsButtonLabel} onPress={() => setShowTerms(true)} />
+            <TextButton
+              label={referralCopy.termsButtonLabel}
+              onPress={() => setShowTerms(true)}
+              tone="muted"
+              centered
+            />
           </View>
         </View>
       </ScrollView>
@@ -455,12 +484,6 @@ const styles = StyleSheet.create({
   },
   phoneFieldsGroup: {
     gap: 12,
-  },
-  phoneDisclaimer: {
-    ...type.body4,
-    fontFamily: fontFamily.bodyItalic,
-    color: white[50],
-    marginTop: -4,
   },
   termsRow: {
     alignItems: 'center',
