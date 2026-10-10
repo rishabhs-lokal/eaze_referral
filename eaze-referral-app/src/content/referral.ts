@@ -177,13 +177,15 @@ export const popupCopy = {
 // no code and the link identifies nobody.
 export function buildShareMessage(): string {
   return [
-    "I'm on Eaze 🎉 and it's worth your first recharge.",
-    // "when you do" points back at the recharge in the line above. It used to read "coins to
-    // start", which promised coins on signing up — true when this was written, wrong since the
-    // reward moved behind a confirmed payment. This is the message people actually paste to a
-    // friend, so it sets the expectation long before anyone opens the Terms.
-    `💰 Download the app and get ${REWARD_COINS} coins when you do: ${DOWNLOAD_URL}`,
-    // Blank line between the two sentences — this is the literal string that gets copied
-    // and shared, so the spacing carries over wherever it's pasted, not just in-app.
+    "Hey, I've been using Eaze for a while now and thought you'd like it.",
+    // "on your first recharge" is the load-bearing phrase and must not be softened to something
+    // that reads as a signup bonus. Coins move only after a confirmed payment (T&C §4), so a
+    // message promising them at install would have every new user wondering, correctly, where
+    // their coins went. This string is what people actually read — long before the Terms.
+    `The nice bit is you get ${REWARD_COINS} coins on your first recharge, so you're basically starting ahead. Took me about two minutes to set up.`,
+    `💰 Here you go: ${DOWNLOAD_URL}`,
+    // Paragraphs are single lines joined by blank lines, never hard-wrapped mid-sentence: the
+    // receiving chat app does its own wrapping, and baked-in line breaks that looked right at
+    // one width turn into ragged half-lines at another.
   ].join('\n\n');
 }
