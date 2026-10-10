@@ -97,6 +97,11 @@ export function ReferralScreen() {
   const [showConsentError, setShowConsentError] = useState(false);
   const [showAlreadyRegisteredPopup, setShowAlreadyRegisteredPopup] = useState(false);
   const [alreadyRegisteredNumbers, setAlreadyRegisteredNumbers] = useState<string[]>([]);
+  const [showShareWarningPopup, setShowShareWarningPopup] = useState(false);
+  // Once per session. The warning has to land before the first paste, but a referrer copying a
+  // second time has already read it, and a dialog on every copy would be dismissed unread —
+  // which is the state we are trying to avoid.
+  const shareWarningSeen = useRef(false);
   const [showExitPopup, setShowExitPopup] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
 
@@ -129,6 +134,12 @@ export function ReferralScreen() {
     const message = buildShareMessage();
     const ok = await copyToClipboard(message);
     showToast(ok ? 'success' : 'error', ok ? referralCopy.copiedToast : referralCopy.copyFailedToast);
+    // Only after a copy that actually succeeded — warning someone about a message they do not
+    // have would be noise.
+    if (ok && !shareWarningSeen.current) {
+      shareWarningSeen.current = true;
+      setShowShareWarningPopup(true);
+    }
     // Best-effort — the click count matters, but it should never block or fail the copy itself.
     logMessageCopy(referrerId).catch(() => {});
   }, [referralCode, referrerId, showToast, hasSavedNumbers]);
@@ -386,6 +397,21 @@ export function ReferralScreen() {
         primaryLabel={popupCopy.needsNumber.primaryLabel}
         onPrimary={() => {
           setShowNeedsNumberPopup(false);
+          scrollToPhoneSection();
+        }}
+      />
+
+      <Popup
+        visible={showShareWarningPopup}
+        onClose={() => setShowShareWarningPopup(false)}
+        eyebrow={popupCopy.shareWarning.eyebrow}
+        title={popupCopy.shareWarning.title}
+        bullets={popupCopy.shareWarning.bullets}
+        primaryLabel={popupCopy.shareWarning.primaryLabel}
+        onPrimary={() => setShowShareWarningPopup(false)}
+        secondaryLabel={popupCopy.shareWarning.secondaryLabel}
+        onSecondary={() => {
+          setShowShareWarningPopup(false);
           scrollToPhoneSection();
         }}
       />

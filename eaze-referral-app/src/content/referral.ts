@@ -37,7 +37,7 @@ export const referralCopy = {
   phoneSectionBody: "We'll let you know the moment they join.",
   addAnotherNumber: '+  Add another number',
   removeNumber: 'Remove',
-  submitButton: 'Save numbers',
+  submitButton: 'Add your friend',
   submitSuccessToast: 'Numbers saved',
   submitFailedToast: "Couldn't save your numbers, try again",
   maxPhoneFields: 5,
@@ -83,7 +83,7 @@ export const termsSections = [
   },
   {
     title: 'How Referrals Work',
-    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. You may not refer your own phone number. By submitting a friend’s phone number, you confirm that you have their permission to share it with Eaze App for the purpose of this referral program.',
+    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. Sharing the invitation message or the download link does not, by itself, create a referral: if a person installs Eaze App through your link but you did not submit their phone number on the Referral Page, no referral exists for them and no coins will be credited to you or to them. You may not refer your own phone number. By submitting a friend’s phone number, you confirm that you have their permission to share it with Eaze App for the purpose of this referral program.',
   },
   {
     title: 'Verification',
@@ -142,6 +142,22 @@ export const popupCopy = {
       'Try a friend who has not used Eaze before.',
     ],
     primaryLabel: 'Use a different number',
+  },
+  // Fires the moment the message reaches the clipboard — the last point at which the referrer
+  // can still choose who to send it to. The whole programme turns on a fact the message itself
+  // cannot carry: the link identifies nobody, so a recipient whose number was never submitted
+  // is invisible to us no matter how they install. Stated in the same terms as T&C §2 rather
+  // than softened, because the consequence is that nobody gets paid.
+  shareWarning: {
+    eyebrow: 'Before you send',
+    title: 'The link on its own earns nothing',
+    bullets: [
+      'Coins are credited only for the numbers you have saved here. The link carries no record of who sent it.',
+      `If someone installs Eaze through this message and you did not save their number first, neither of you receives the ${REWARD_COINS} coins.`,
+      'Send it to the friends whose numbers you saved, and save any others before sharing with them.',
+    ],
+    primaryLabel: 'Understood',
+    secondaryLabel: 'Add another number',
   },
   exitReminder: {
     eyebrow: "Don't leave yet",
