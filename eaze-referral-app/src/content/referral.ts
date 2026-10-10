@@ -38,8 +38,11 @@ export const referralCopy = {
   addAnotherNumber: '+  Add another number',
   removeNumber: 'Remove',
   submitButton: 'Add your friend',
-  submitSuccessToast: 'Numbers saved',
-  submitFailedToast: "Couldn't save your numbers, try again",
+  // Takes the count because a referrer can submit up to five at once, and because a sibling
+  // number can be rejected as already-registered while the rest land — "friends added" after
+  // exactly one went through would misreport what actually happened.
+  submitSuccessToast: (saved: number) => (saved === 1 ? 'Friend added' : `${saved} friends added`),
+  submitFailedToast: "Couldn't add your friend, try again",
   maxPhoneFields: 5,
   missingLinkHeadline: 'Open this from the Eaze app',
   missingLinkBody: "This page only works when it's opened through the Refer a friend banner in Eaze.",
@@ -83,7 +86,7 @@ export const termsSections = [
   },
   {
     title: 'How Referrals Work',
-    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. Sharing the invitation message or the download link does not, by itself, create a referral: if a person installs Eaze App through your link but you did not submit their phone number on the Referral Page, no referral exists for them and no coins will be credited to you or to them. You may not refer your own phone number. By submitting a friend’s phone number, you confirm that you have their permission to share it with Eaze App for the purpose of this referral program.',
+    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. Sharing the invitation message or the download link does not, by itself, create a referral: if a person installs Eaze App through your link but you did not submit their phone number on the Referral Page, no referral exists for them and no coins will be credited to you or to them. You may not refer your own phone number. Before any phone number can be entered, you must tick the declaration shown on the Referral Page; no number can be entered or submitted until you do. By ticking it you confirm that you have that person’s permission to share their phone number with Eaze App for the purpose of this referral program, and that you accept these Terms.',
   },
   {
     title: 'Verification',

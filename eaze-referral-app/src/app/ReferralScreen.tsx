@@ -215,7 +215,7 @@ export function ReferralScreen() {
       // only clear the fields and congratulate them when something actually landed.
       if (result.saved > 0) {
         setHasSavedNumbers(true);
-        showToast('success', referralCopy.submitSuccessToast);
+        showToast('success', referralCopy.submitSuccessToast(result.saved));
         setFields([{ id: ++nextFieldId.current, local: '', valid: false }]);
         setAttemptedSubmit(false);
       }
