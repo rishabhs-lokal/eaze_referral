@@ -3,10 +3,10 @@
 tier-1000 first. tier-500 is the same image and the same keys with two numbers and one
 `DATABASE_URL` changed — see the bottom.
 
-Verified at commit `087763b`. The service code is **byte-identical** to `2e7fc51`, the commit the
-earlier `DEPLOY_TIER_1000.md` runbook was written against; everything since has been frontend.
-The image is tagged at `22b2225` anyway, so "what is deployed" matches "what is on main" without
-anyone having to remember that.
+Verified at commit `087763b`. Tag the image with that SHA so "what is deployed" matches "what is
+on main" without anyone having to remember a mapping.
+
+Supersedes `DEPLOY_TIER_1000.md`, which assumes the `kubectl` path and predates migration `0006`.
 
 ## What has actually been verified
 
@@ -14,11 +14,12 @@ Run on 2026-10-12, against production Redash:
 
 | | |
 |---|---|
-| Image builds | ✅ `eaze-referral-service:22b2225` |
+| Image builds | ✅ at `087763b` |
 | Test suite, inside that image | ✅ 19 passed |
 | Redash `20610` (phone → account) | ✅ answers, correct columns, matches E.164 / 91-prefixed / bare 10-digit |
 | Redash `20649` (payments) | ✅ answers, all required and optional columns present |
-| Schema | ✅ alembic `0006`, 12 tables |
+| Schema | ✅ alembic `0006` applied to a live database, 12 tables |
+| Queue expiry + prioritisation | ✅ against a live database: `checked` 3→1, signed-up row survived expiry, second pass idempotent |
 
 **Not verified, and it is the branch that moves money:** no referral has ever been paid against
 production. The probe number had `successful_payment_count = 0`, so the payout path has only
