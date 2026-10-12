@@ -78,6 +78,10 @@ class ReconcileResponse(CamelModel):
     ran: bool
     reason: str | None = None
     pulled_from_sheet: int = 0
+    # Referrals retired this pass for never producing a signup. Reported so a sudden spike
+    # is visible — a misconfigured REFERRAL_EXPIRY_DAYS would otherwise silently retire
+    # live referrals and look exactly like a quiet day.
+    expired_no_signup: int = 0
     checked: int = 0
     signups_confirmed: int = 0
     disqualified_already_registered: int = 0
@@ -100,3 +104,9 @@ class VerificationSummaryResponse(CamelModel):
     paid_but_signup_coins_not_credited: int
     disqualified_already_registered: int
     awaiting_phone_check: int
+    expired_no_signup: int = 0
+    # When the longest-waiting unsettled referral was last looked at. Every other field
+    # here says what happened; this one says whether the queue is keeping up. Each pass
+    # covers at most redash_batch_size rows, so once the outstanding count exceeds that,
+    # this timestamp starts sliding and nothing else would show it.
+    oldest_pending_checked_at: str | None = None

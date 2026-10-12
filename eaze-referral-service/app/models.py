@@ -192,11 +192,11 @@ class ReferralVerification(Base):
             name="referral_verifications_payment_status",
         ),
         CheckConstraint(
-            "signup_coins_status IN ('PENDING', 'CREDITED', 'SKIPPED')",
+            "signup_coins_status IN ('PENDING', 'CREDITED', 'SKIPPED', 'EXPIRED')",
             name="referral_verifications_signup_coins_status",
         ),
         CheckConstraint(
-            "referrer_coins_status IN ('PENDING', 'CREDITED', 'SKIPPED')",
+            "referrer_coins_status IN ('PENDING', 'CREDITED', 'SKIPPED', 'EXPIRED')",
             name="referral_verifications_referrer_coins_status",
         ),
         # The reconciler's work queue is "rows not yet fully settled" — this is the index that

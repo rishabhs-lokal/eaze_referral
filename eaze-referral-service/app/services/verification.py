@@ -90,6 +90,12 @@ async def _pending_rows(
     """
     query = select(ReferralVerification).where(
         ReferralVerification.phone_check_status != "ALREADY_REGISTERED",
+        # Checked explicitly rather than inferred from the OR below. Expiry sets the coin
+        # statuses, but a row can still satisfy that OR through payment_status or
+        # phone_check_status, which would quietly keep retired rows in the queue — the exact
+        # cost expiry exists to remove. One condition that names the intent beats four that
+        # have to agree.
+        ReferralVerification.referrer_coins_status != "EXPIRED",
         or_(
             ReferralVerification.phone_check_status == "UNCHECKED",
             ReferralVerification.payment_status == "PENDING",
@@ -100,10 +106,61 @@ async def _pending_rows(
     if phones:
         query = query.where(ReferralVerification.phone_e164.in_(phones))
 
+    # Signed-up-but-not-yet-paid goes first. Both groups are re-checked every pass while the
+    # queue is small, but once it exceeds `limit` the order decides who waits — and someone who
+    # already has an Eaze account is far likelier to produce a payment than someone who never
+    # installed. Without this, a referral that recharged an hour ago queues behind hundreds of
+    # invites that went nowhere, purely because those were checked longer ago.
+    #
+    # Within each group it stays oldest-checked-first, so nothing starves inside its own tier.
     result = await session.execute(
-        query.order_by(ReferralVerification.last_checked_at.asc().nulls_first()).limit(limit)
+        query.order_by(
+            ReferralVerification.eaze_user_id.is_(None).asc(),
+            ReferralVerification.last_checked_at.asc().nulls_first(),
+        ).limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def _expire_stale(session: AsyncSession, settings: Settings) -> int:
+    """Retire referrals that never produced an Eaze account, so they stop consuming the budget.
+
+    Deliberately narrow. A referral is only expired when ALL of these hold:
+      - it never resolved to an Eaze user id — nobody ever signed up on that number
+      - it is older than `referral_expiry_days`
+      - it has not already been disqualified, and coins are still outstanding
+
+    Someone who signed up but has not recharged is never expired, however long they take: they
+    are exactly the person this programme is waiting for, and the Terms promise them their coins
+    whenever that first recharge lands.
+    """
+    days = settings.referral_expiry_days
+    if days <= 0:
+        return 0
+
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    result = await session.execute(
+        update(ReferralVerification.__table__)
+        .where(
+            ReferralVerification.eaze_user_id.is_(None),
+            ReferralVerification.created_at < cutoff,
+            ReferralVerification.phone_check_status != "ALREADY_REGISTERED",
+            or_(
+                ReferralVerification.signup_coins_status == "PENDING",
+                ReferralVerification.referrer_coins_status == "PENDING",
+            ),
+        )
+        .values(
+            signup_coins_status="EXPIRED",
+            referrer_coins_status="EXPIRED",
+            last_error=f"expired after {days} days with no signup",
+            updated_at=func.now(),
+        )
+    )
+    count = result.rowcount or 0
+    if count:
+        logger.info("expired %d referral(s) with no signup after %d days", count, days)
+    return count
 
 
 async def _resolve_eaze_user_ids(
@@ -348,6 +405,10 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
 
     batch_limit = limit or settings.redash_batch_size
 
+    # Before anything else, so the pass does not spend its budget on rows it is about to retire.
+    async with transaction(session):
+        expired_count = await _expire_stale(session, settings)
+
     # Pull the phone numbers from the Google Sheet — that's the working list of who's been
     # referred. Falls back to the database queue when the sheet is unreachable or empty, so a
     # Sheets outage delays nothing: people owed coins still get paid.
@@ -376,6 +437,7 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
     elif sheet_phones:
         logger.info("pulled %d phone numbers from the sheet", len(sheet_phones))
     empty = {
+        "expired_no_signup": expired_count,
         "pulled_from_sheet": len(sheet_phones),
         "signups_confirmed": 0,
         "disqualified_already_registered": 0,
@@ -643,6 +705,26 @@ async def verification_summary(session: AsyncSession) -> dict:
             ReferralVerification.phone_check_status == "UNCHECKED"
         )
     )
+    expired = await session.execute(
+        select(func.count()).select_from(ReferralVerification).where(
+            ReferralVerification.referrer_coins_status == "EXPIRED"
+        )
+    )
+    # How far behind the reconciler actually is. Every other number here says what happened;
+    # this one says whether the queue is keeping up. Each pass covers at most redash_batch_size
+    # rows, so once the outstanding count exceeds that, the oldest check starts sliding — and
+    # nothing else in this summary would show it. A figure creeping past a few hours means
+    # either raise the batch size or shorten the interval.
+    stalest = await session.execute(
+        select(func.min(ReferralVerification.last_checked_at)).where(
+            ReferralVerification.phone_check_status != "ALREADY_REGISTERED",
+            or_(
+                ReferralVerification.signup_coins_status == "PENDING",
+                ReferralVerification.referrer_coins_status == "PENDING",
+            ),
+        )
+    )
+    oldest_checked_at = stalest.scalar_one_or_none()
     return {
         "referred": total.scalar_one(),
         "signed_up": signed_up.scalar_one(),
@@ -652,4 +734,6 @@ async def verification_summary(session: AsyncSession) -> dict:
         "paid_but_signup_coins_not_credited": signup_owed.scalar_one(),
         "disqualified_already_registered": disqualified.scalar_one(),
         "awaiting_phone_check": unchecked.scalar_one(),
+        "expired_no_signup": expired.scalar_one(),
+        "oldest_pending_checked_at": oldest_checked_at.isoformat() if oldest_checked_at else None,
     }

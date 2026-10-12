@@ -118,6 +118,19 @@ class Settings(BaseSettings):
     # 15 minutes trades a little payout latency against Redash load; every pass costs two
     # warehouse queries.
     reconcile_interval_seconds: int = 900
+    # After this many days with no signup at all, stop asking Redash about a referral.
+    #
+    # Nothing ever leaves the reconciler's queue on its own: a friend who was referred and never
+    # installed stays in it forever, and the queue is served round-robin, so those dead rows
+    # compete for the same per-pass budget as a referral made this morning. Left alone, a
+    # successful programme ends up spending most of every pass re-asking about people who are
+    # never coming, while someone who recharged an hour ago waits behind them.
+    #
+    # Only applies to referrals that never produced an Eaze account. Someone who signed up but
+    # has not recharged yet is a live prospect and is never expired, however long they take.
+    # T&C §6 reserves the right to expire a pending referral, which is what makes this
+    # defensible rather than merely convenient. 0 disables expiry entirely.
+    referral_expiry_days: int = 90
 
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"

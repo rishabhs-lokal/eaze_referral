@@ -40,6 +40,11 @@ data:
   # How often the service re-checks who has paid and credits them. This is what makes payouts
   # happen on their own; 0 disables the loop entirely.
   RECONCILE_INTERVAL_SECONDS: "900"
+  # Stop polling a referral that never produced an Eaze account after this many days.
+  # Nothing else retires a row, so without this the queue only grows and dead invites
+  # crowd out live ones against the fixed per-pass budget. Someone who signed up but has
+  # not recharged is never expired. 0 disables it. T&C §6 covers expiring a pending referral.
+  REFERRAL_EXPIRY_DAYS: "90"
   # Eaze's coin-credit endpoint. The auth key is in the Secret.
   EAZE_FREE_COINS_API_URL: "https://api.eazeapp.com/payments/free-coins/upload/"
   EAZE_FREE_COINS_AUTH_HEADER: "x-n8n-auth-key"
