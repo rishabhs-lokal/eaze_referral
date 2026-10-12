@@ -70,6 +70,29 @@ healthy while unable to reach the database or Redash).
 
 A mismatch in (3) is the nastiest: the page loads perfectly and every API call fails.
 
+## Build settings
+
+The Dockerfile is multi-stage and stage one builds the frontend, which lives in a sibling
+directory — so the build context is the **repository root**, not `eaze-referral-service/`.
+
+| Devtron field | Value |
+|---|---|
+| Dockerfile Path | `eaze-referral-service/Dockerfile` |
+| Build Context Path | `.` |
+| Build argument | `EXPO_PUBLIC_REWARD_COINS=1000` |
+
+The build argument is required. `EXPO_PUBLIC_REWARD_COINS` is inlined into the JS bundle and the
+app throws at import if it is missing or not a positive number, so a build that forgets it fails
+loudly instead of shipping a page that promises the wrong amount.
+
+This is also why **the image is tier-specific**. tier-500 needs its own build, not just its own
+ConfigMap — the coin amount is no longer pure configuration on the frontend side. It already
+needed its own database, so it was always going to be a separate deployment.
+
+`EXPO_PUBLIC_API_BASE_URL` defaults to empty, which means same-origin: the page calls
+`/api/referral/...` relative to wherever it was served from. Nothing to keep in sync, and no
+CORS. Do not set it unless the page is ever hosted somewhere other than this service.
+
 ## Migrations
 
 `dbMigrationConfig.enabled` stays `false`. Migrations run as a **pre-deployment stage** in the CD
