@@ -24,13 +24,32 @@ chart default, left alone deliberately.
 | `ingress.enabled` | `false` | `true` | ClusterIP alone is unreachable from a user's browser, which is where this API is called from |
 | `ingress.hosts[0].host` | example | `eaze-referral1000.eazeapp.com` | `{project}-{app}.{domain}` |
 | `ingress.tls[0].secretName` | — | `eaze-referral1000-tls` | `{project}-{app}-tls` |
+| `ingress.className` | `""` | `nginx` | copied from eaze-leaderboard |
+| `ingress.annotations` | `{}` | 4 nginx annotations | copied from eaze-leaderboard |
+| `Spec.Affinity` | `""` / `""` | `kubernetes.io/arch` / `arm64` | the cluster is Graviton |
 
-Still to confirm against your cluster:
+### Why the ingress needs BOTH className and the annotation
 
-- `ingress.className` is left `""`. With no default ingress class the Ingress object is created
-  and silently never routed.
-- `eaze-referral1000-tls` must exist or be issued by cert-manager. If your other apps annotate
-  the ingress for that, add the same annotation under `ingress.annotations`.
+The first attempt set only `className`. The Ingress object was created, no controller claimed
+it, no load balancer address was ever assigned, Argo CD sat at `Progressing` forever, and the
+hostname stayed NXDOMAIN. Two symptoms, one cause.
+
+`kubernetes.io/ingress.class` is deprecated upstream but this cluster's nginx controller still
+claims on it — `eaze-leaderboard` sets both, and it works. Copied verbatim rather than
+rationalised.
+
+### Node architecture
+
+`Spec.Affinity` pins to `kubernetes.io/arch: arm64`, matching eaze-leaderboard. The cluster runs
+Graviton nodes, which is why Devtron's builder defaults to `--platform linux/arm64`. Without the
+affinity a pod can reschedule onto an x86 node and die with `exec format error` — a failure that
+reads like a corrupt image rather than a scheduling one.
+
+### Still to confirm
+
+`eaze-referral1000-tls` must exist. eaze-leaderboard's ingress carries no cert-manager
+annotation, so `eaze-leaderboard-tls` was created by hand — the equivalent for this app almost
+certainly does not exist yet. With `ssl-redirect: "false"` HTTP still works without it.
 
 ## The two config objects
 

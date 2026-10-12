@@ -40,8 +40,8 @@ ReadinessProbe:
   timeoutSeconds: 5
 Spec:
   Affinity:
-    Key: ""
-    Values: ""
+    Key: kubernetes.io/arch
+    Values: arm64
 StartupProbe:
   Path: /healthz
   command: []
@@ -168,8 +168,12 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 ingress:
-  annotations: {}
-  className: ""
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  className: nginx
   enabled: true
   hosts:
     - host: eaze-referral1000.eazeapp.com
@@ -178,9 +182,7 @@ ingress:
         - /
   labels: {}
   tls:
-    - hosts:
-        - eaze-referral1000.eazeapp.com
-      secretName: eaze-referral1000-tls
+    - secretName: eaze-referral1000-tls
 ingressInternal:
   annotations: {}
   className: ""
