@@ -30,7 +30,12 @@ services:
       retries: 20
 
   migrate:
-    build: .
+    build:
+      # Repo root, because the Dockerfile's web stage needs ../eaze-referral-app.
+      context: ..
+      dockerfile: eaze-referral-service/Dockerfile
+      args:
+        EXPO_PUBLIC_REWARD_COINS: "1000"
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/eaze
@@ -45,7 +50,12 @@ services:
     restart: "no"
 
   app:
-    build: .
+    build:
+      # Repo root, because the Dockerfile's web stage needs ../eaze-referral-app.
+      context: ..
+      dockerfile: eaze-referral-service/Dockerfile
+      args:
+        EXPO_PUBLIC_REWARD_COINS: "1000"
     ports:
       - "8091:8000"
     environment:

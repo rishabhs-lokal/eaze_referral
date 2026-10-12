@@ -28,6 +28,7 @@ Design rules, all of which matter because this moves money:
 import asyncio
 import datetime as dt
 import logging
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -43,17 +44,40 @@ from app.services.sheets_webhook import list_sheet_rows, update_sheet_status
 logger = logging.getLogger("eaze_referral.verification")
 
 
-def _parse_timestamp(value) -> dt.datetime | None:
+def _parse_timestamp(value, assume_tz: str = "UTC") -> dt.datetime | None:
     """Redash hands back whatever the warehouse driver serialised — usually an ISO string,
     sometimes already a datetime, sometimes null. Anything unparseable is treated as "no
     timestamp" rather than failing the whole batch: the payment flag is what gates the reward,
-    the exact timestamp is reporting detail."""
-    if value is None or isinstance(value, dt.datetime):
+    the exact timestamp is reporting detail.
+
+    ALWAYS returns an aware datetime, or None. The warehouse serialises without an offset
+    (`2026-07-28T06:43:06.898`), while every column this gets compared against is
+    `DateTime(timezone=True)` and therefore aware. Comparing the two raises TypeError, which
+    took down an entire reconcile pass in production — and did it in the one branch that only
+    executes once a referral has a payment row, so neither local testing nor an empty database
+    ever reached it.
+
+    `assume_tz` is what a naive value is interpreted as. Callers pass settings.db_timezone,
+    because the warehouse is a Lokal system recording Indian activity and this service already
+    standardised on IST throughout. Getting it wrong shifts a timestamp by 5h30m, which only
+    matters for an account registered within that window of the referral being made — and that
+    case is already covered by the save-time check against query 20610. The payout-time
+    comparison is a backstop for when that check timed out, not the primary gate.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dt.datetime):
+        try:
+            value = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if value.tzinfo is not None:
         return value
     try:
-        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+        return value.replace(tzinfo=ZoneInfo(assume_tz))
+    except Exception:  # noqa: BLE001 - an unknown zone must not take down a payout pass
+        logger.warning("unknown timezone %r, treating naive timestamps as UTC", assume_tz)
+        return value.replace(tzinfo=dt.timezone.utc)
 
 
 def _normalise_sheet_phone(value: object) -> str | None:
@@ -471,7 +495,9 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
             if match and match.get("user_id") is not None:
                 row.eaze_user_id = str(match["user_id"])
                 row.signup_status = "SIGNED_UP"
-                row.signed_up_at = row.signed_up_at or _parse_timestamp(match.get("registered_at"))
+                row.signed_up_at = row.signed_up_at or _parse_timestamp(
+                    match.get("registered_at"), settings.db_timezone
+                )
                 row.source = "REDASH"
                 stats["signups_confirmed"] += 1
 
@@ -531,7 +557,11 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
             # users — so it never earns coins however much it later pays. This is the same
             # verdict the save-time check reaches, re-derived at payout so a check that timed
             # out can't let a pre-existing account through.
-            registered_at = _parse_timestamp(payment.get("registered_at")) if payment else None
+            registered_at = (
+                _parse_timestamp(payment.get("registered_at"), settings.db_timezone)
+                if payment
+                else None
+            )
             if registered_at and row.created_at and registered_at < row.created_at:
                 if row.phone_check_status != "ALREADY_REGISTERED":
                     row.phone_check_status = "ALREADY_REGISTERED"
@@ -589,7 +619,7 @@ async def _pay_out(
         # up as outstanding rather than being silently closed.
         return []
 
-    first_at = _parse_timestamp(payment.get("first_payment_at"))
+    first_at = _parse_timestamp(payment.get("first_payment_at"), settings.db_timezone)
     amount = payment.get("first_payment_amount_paise")
     result = await referral_service.credit_both_on_payment(
         session,
