@@ -9,7 +9,10 @@ data:
   # namespace runs the identical image as the 500-coin tier.
   SIGNUP_BONUS_COINS: "1000"
   RECHARGE_BONUS_COINS: "1000"
-  PUBLIC_BASE_URL: "https://refer.eaze.app"
+  # Must match the ingress host in the Devtron deployment template, and the web
+  # build's EXPO_PUBLIC_API_BASE_URL. One value, three places — a mismatch leaves the
+  # page loading fine while every API call fails.
+  PUBLIC_BASE_URL: "https://eaze-referral1000.eazeapp.com"
   # Verified by resolving the OneLink (eaze.onelink.me/x8qY/eirps9xf) with per-platform
   # user agents: iOS lands on id6748073409, Android on live.emotionalcare.eazeapp. The
   # previous values here were a placeholder (idXXXXXXXXX) and the wrong package name
@@ -39,7 +42,17 @@ data:
   PHONE_CHECK_TIMEOUT_SECONDS: "8"
   # How often the service re-checks who has paid and credits them. This is what makes payouts
   # happen on their own; 0 disables the loop entirely.
-  RECONCILE_INTERVAL_SECONDS: "900"
+  # 0 = the payout loop is OFF. Nobody is credited until someone calls
+  # POST /admin/reconcile. This is the shipping default on purpose: the two ways to get
+  # it wrong are not symmetric. Forget to set 0 and the first real credit this programme
+  # ever makes happens unattended, against a payout path never exercised on production
+  # data, and a wrong credit cannot be clawed back out of a user's wallet. Forget to set
+  # 900 and payouts simply do not happen — visible in verification-summary, and fixed by
+  # editing one value.
+  #
+  # Set to 900 (a pass every 15 minutes, fully automatic) once the supervised first run
+  # has credited someone and you have checked a real wallet. DEPLOY_DEVTRON.md step 5.
+  RECONCILE_INTERVAL_SECONDS: "0"
   # Stop polling a referral that never produced an Eaze account after this many days.
   # Nothing else retires a row, so without this the queue only grows and dead invites
   # crowd out live ones against the fixed per-pass budget. Someone who signed up but has
@@ -50,4 +63,4 @@ data:
   EAZE_FREE_COINS_AUTH_HEADER: "x-n8n-auth-key"
   # Optional human-readable mirror of the pipeline into a Google Sheet. URL is not a secret;
   # the shared secret that authenticates to it is.
-  GOOGLE_SHEETS_WEBHOOK_URL: ""
+  GOOGLE_SHEETS_WEBHOOK_URL: "https://script.google.com/macros/s/AKfycbxkIAl7MfVNluogf8WN--degrVtMxmw-I5I4EPcKAN6hsTiYSlHWkYltTj_CjOhYwSA5A/exec"
