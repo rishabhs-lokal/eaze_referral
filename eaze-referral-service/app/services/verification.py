@@ -57,12 +57,12 @@ def _parse_timestamp(value, assume_tz: str = "UTC") -> dt.datetime | None:
     executes once a referral has a payment row, so neither local testing nor an empty database
     ever reached it.
 
-    `assume_tz` is what a naive value is interpreted as. Callers pass settings.db_timezone,
-    because the warehouse is a Lokal system recording Indian activity and this service already
-    standardised on IST throughout. Getting it wrong shifts a timestamp by 5h30m, which only
-    matters for an account registered within that window of the referral being made — and that
-    case is already covered by the save-time check against query 20610. The payout-time
-    comparison is a backstop for when that check timed out, not the primary gate.
+    `assume_tz` is what a naive value is interpreted as — callers pass
+    settings.redash_timestamp_timezone, which is UTC and was established by observation, not
+    assumption (see the comment on that setting). An earlier version of this used
+    db_timezone, i.e. IST, on the reasoning that the warehouse is an Indian system. That was
+    wrong by 5h30m in the direction that reads every signup as older than it is, which marks
+    genuine new users as pre-existing and denies both sides their coins.
     """
     if value is None:
         return None
@@ -496,7 +496,7 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
                 row.eaze_user_id = str(match["user_id"])
                 row.signup_status = "SIGNED_UP"
                 row.signed_up_at = row.signed_up_at or _parse_timestamp(
-                    match.get("registered_at"), settings.db_timezone
+                    match.get("registered_at"), settings.redash_timestamp_timezone
                 )
                 row.source = "REDASH"
                 stats["signups_confirmed"] += 1
@@ -558,7 +558,7 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
             # verdict the save-time check reaches, re-derived at payout so a check that timed
             # out can't let a pre-existing account through.
             registered_at = (
-                _parse_timestamp(payment.get("registered_at"), settings.db_timezone)
+                _parse_timestamp(payment.get("registered_at"), settings.redash_timestamp_timezone)
                 if payment
                 else None
             )
@@ -619,7 +619,7 @@ async def _pay_out(
         # up as outstanding rather than being silently closed.
         return []
 
-    first_at = _parse_timestamp(payment.get("first_payment_at"), settings.db_timezone)
+    first_at = _parse_timestamp(payment.get("first_payment_at"), settings.redash_timestamp_timezone)
     amount = payment.get("first_payment_amount_paise")
     result = await referral_service.credit_both_on_payment(
         session,

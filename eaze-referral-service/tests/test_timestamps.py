@@ -61,3 +61,20 @@ def test_unknown_timezone_falls_back_to_utc_rather_than_raising():
     got = _parse_timestamp("2026-07-28T06:43:06.898", "Not/AZone")
     assert got is not None
     assert got.utcoffset() == dt.timedelta(0)
+
+
+def test_warehouse_naive_is_read_as_utc_not_ist():
+    """The six-hour mistake that would have denied the first real payout.
+
+    The warehouse returned registered_at 2026-10-12T11:49:25 for an account created 26 minutes
+    before the wall clock read 12:15 UTC. Read as IST that lands at 06:19 UTC — hours before the
+    referral that produced it — and the pre-existing-user guard denies both sides their coins.
+    """
+    as_utc = _parse_timestamp("2026-10-12T11:49:25.635", "UTC")
+    as_ist = _parse_timestamp("2026-10-12T11:49:25.635", "Asia/Kolkata")
+    assert as_utc.astimezone(dt.timezone.utc).hour == 11
+    assert as_ist.astimezone(dt.timezone.utc).hour == 6
+    # A referral created at 11:30 UTC, with the signup at 11:49 UTC: genuinely new.
+    created_at = dt.datetime(2026, 10, 12, 11, 30, tzinfo=dt.timezone.utc)
+    assert as_utc > created_at, "UTC reading keeps a genuine new signup eligible"
+    assert as_ist < created_at, "the IST reading is what would have disqualified it"

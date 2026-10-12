@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     # How many phone numbers / user ids to pack into one Redash query. Redash parameters are
     # substituted into SQL, so this bounds the generated statement size.
     redash_batch_size: int = 200
+    # What a Redash timestamp with no offset means. The warehouse serialises naive
+    # (`2026-10-12T11:49:25.635`), and this decides how that is read.
+    #
+    # UTC, established empirically rather than assumed: a payment observed 20 minutes after it
+    # happened came back as 11:55:27 while the wall clock read 12:15 UTC / 17:45 IST. Reading it
+    # as IST would place it six hours in the past.
+    #
+    # Six hours is not cosmetic here. registered_at is compared against the referral's
+    # created_at to disqualify accounts that already existed, so reading it too early marks a
+    # genuine new signup as pre-existing and silently denies both sides their coins. That is
+    # exactly what would have happened to the first real payout of this programme.
+    #
+    # Configurable because it is a fact about someone else's warehouse, not about this service.
+    redash_timestamp_timezone: str = "UTC"
     # How long POST /api/referral/intents will wait for the "is this already an Eaze user?"
     # check before saving anyway. Spent inside a request the user is waiting on, so it trades
     # the chance to warn them immediately against how long Save can hang. Exceeding it is not
