@@ -3,7 +3,7 @@
 tier-1000 first. tier-500 is the same image and the same keys with two numbers and one
 `DATABASE_URL` changed — see the bottom.
 
-Verified at commit `22b2225`. The service code is **byte-identical** to `2e7fc51`, the commit the
+Verified at commit `087763b`. The service code is **byte-identical** to `2e7fc51`, the commit the
 earlier `DEPLOY_TIER_1000.md` runbook was written against; everything since has been frontend.
 The image is tagged at `22b2225` anyway, so "what is deployed" matches "what is on main" without
 anyone having to remember that.
@@ -18,7 +18,7 @@ Run on 2026-10-12, against production Redash:
 | Test suite, inside that image | ✅ 19 passed |
 | Redash `20610` (phone → account) | ✅ answers, correct columns, matches E.164 / 91-prefixed / bare 10-digit |
 | Redash `20649` (payments) | ✅ answers, all required and optional columns present |
-| Schema | ✅ alembic `0005`, 12 tables |
+| Schema | ✅ alembic `0006`, 12 tables |
 
 **Not verified, and it is the branch that moves money:** no referral has ever been paid against
 production. The probe number had `successful_payment_count = 0`, so the payout path has only
@@ -50,6 +50,7 @@ if you change a value in Devtron, change it there too, or the file becomes a lie
 | `REDASH_PAYMENTS_QUERY_ID` | `20649` |
 | `PHONE_CHECK_TIMEOUT_SECONDS` | `8` |
 | `RECONCILE_INTERVAL_SECONDS` | `0` for the first deploy, then `900` — see step 5 |
+| `REFERRAL_EXPIRY_DAYS` | `90` — stops polling referrals that never produced a signup |
 | `EAZE_FREE_COINS_API_URL` | `https://api.eazeapp.com/payments/free-coins/upload/` |
 | `EAZE_FREE_COINS_AUTH_HEADER` | `x-n8n-auth-key` |
 | `GOOGLE_SHEETS_WEBHOOK_URL` | the Apps Script Web App URL |
@@ -93,7 +94,7 @@ alembic upgrade head
 on the same image, with the same ConfigMap and Secret attached.
 
 If migrations instead run as a post-deployment stage, or not at all, new pods start serving
-traffic against a schema that has no `referral_verifications` table. Migrations `0004` and `0005`
+traffic against a schema that has no `referral_verifications` table. Migrations `0004` through `0006`
 must land **before** the new code takes traffic. This is the single highest-risk difference
 between the two deployment paths.
 
