@@ -202,23 +202,71 @@ are indistinguishable there. Fine while only tier-1000 is live; fix before tier-
 
 ---
 
-## Then tier-500
+## Later: tier-500
 
-Same image, same commit, same keys. Only these differ:
+**Not deployed. Do not deploy it against tier-1000's database.**
+
+Sharing one database between the two tiers silently pays the wrong amount, and the wrong amount
+sticks. Three facts combine to cause it:
+
+- `referral_verifications` has no tier column — a row does not know which deployment made it
+- the coin amount comes from `settings.signup_bonus_coins`, i.e. **the reconciling pod's own
+  config**, read at payout time rather than recorded when the referral was created
+- both deployments use the same advisory lock key
+
+So both reconcilers would poll the same queue, and whichever pod won the lock on a given tick
+would pay **its own** amount for **every** row in it. A 1000-coin referral credited 500, or the
+reverse, decided by which pod happened to wake first. `wallet_transactions`'
+`UNIQUE(user_id, type, reference_id)` then makes it permanent: the side is recorded as paid, so
+nothing retries and nothing corrects it. The two tiers would also serialise on that shared lock,
+halving throughput.
+
+None of this can happen while only tier-1000 exists. It becomes real the moment a second
+deployment points at the same `DATABASE_URL`.
+
+### Before tier-500 can launch, one of these
+
+**Give it its own database.** No code change. The two tiers never see each other's rows. The
+cost is that a phone number could be referred once in each tier, since the uniqueness constraint
+on `referral_intents.phone_e164` is per-database — worth deciding whether that matters to you.
+
+**Or record the amount on the row.** `signup_coins_amount` and `referrer_coins_amount` already
+exist as columns; they are simply written at payout instead of at referral time. Moving that
+write makes each row carry what it is owed, so it no longer matters which pod pays it. The
+advisory lock key would need to vary per tier too, so the reconcilers stop blocking each other.
+Roughly an hour, and it is the better design regardless — see below.
+
+### The same issue, with one tier
+
+Even with tier-1000 alone, the amount is read from config at payout. Change
+`SIGNUP_BONUS_COINS` and every **pending** referral is repaid at the new rate — including people
+whose invite message already promised the old number. T&C §6 says changes apply prospectively
+and do not affect referrals already *completed*, but a pending referral is not completed, and
+the referrer has already sent the message.
+
+So: while only tier-1000 is live, treat `SIGNUP_BONUS_COINS` and `RECHARGE_BONUS_COINS` as
+**immutable**. If the amount ever needs to change, record it per-row first.
+
+### If tier-500 does launch
+
+Same image, same commit, same keys, differing only in:
 
 | Key | tier-500 |
 |---|---|
 | `SIGNUP_BONUS_COINS` | `500` |
 | `RECHARGE_BONUS_COINS` | `500` |
-| `DATABASE_URL` | tier-500's own database |
+| `DATABASE_URL` | **its own database** — see above |
 | `PUBLIC_BASE_URL` | tier-500's host |
 
-Afterwards, from a machine with cluster access:
+Then, from a machine with cluster access:
 
 ```bash
 ./scripts/check_tier_parity.sh
 ```
 
 It compares running images, schema versions and API surface. Tier drift has happened twice in
-this project — a change landed, one tier was rebuilt, and the other kept serving older code while
-looking perfectly healthy.
+this project — a change landed, one tier was rebuilt, and the other kept serving older code
+while looking perfectly healthy.
+
+Note also that both tiers write to the same Google Sheet and rows carry no tier label, so
+1000- and 500-coin referrals are indistinguishable there.
