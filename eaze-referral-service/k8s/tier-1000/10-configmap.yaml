@@ -10,9 +10,15 @@ data:
   SIGNUP_BONUS_COINS: "1000"
   RECHARGE_BONUS_COINS: "1000"
   PUBLIC_BASE_URL: "https://refer.eaze.app"
-  PLAY_STORE_URL: "https://play.google.com/store/apps/details?id=com.eaze.app"
-  APP_STORE_URL: "https://apps.apple.com/app/idXXXXXXXXX"
-  FALLBACK_URL: "https://play.google.com/store/apps/details?id=com.eaze.app"
+  # Verified by resolving the OneLink (eaze.onelink.me/x8qY/eirps9xf) with per-platform
+  # user agents: iOS lands on id6748073409, Android on live.emotionalcare.eazeapp. The
+  # previous values here were a placeholder (idXXXXXXXXX) and the wrong package name
+  # (com.eaze.app), so anything still hitting /r/{code} was sent to two dead listings.
+  # These only serve that legacy redirect — the invite message itself now carries the
+  # OneLink, which does this routing for us.
+  PLAY_STORE_URL: "https://play.google.com/store/apps/details?id=live.emotionalcare.eazeapp"
+  APP_STORE_URL: "https://apps.apple.com/in/app/eaze-app-talk-feel-better/id6748073409"
+  FALLBACK_URL: "https://eaze.onelink.me/x8qY/eirps9xf"
   LOG_LEVEL: "info"
   DATABASE_SSL_MODE: "require"
   DB_TIMEZONE: "Asia/Kolkata"
