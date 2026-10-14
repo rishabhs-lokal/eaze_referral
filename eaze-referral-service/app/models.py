@@ -73,6 +73,10 @@ class ReferralIntent(Base):
     __tablename__ = "referral_intents"
     __table_args__ = (
         CheckConstraint(r"phone_e164 ~ '^\+91[6-9]\d{9}$'", name="referral_intents_phone_format"),
+        # Counting one referrer's rows is on the hot path twice over since the per-referrer cap
+        # exists: once per page load, and once inside the write transaction of every save while
+        # the referrer's row is locked.
+        Index("idx_referral_intents_referrer", "referrer_user_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -203,6 +207,9 @@ class ReferralVerification(Base):
         # keeps that scan cheap as the table grows.
         Index("idx_referral_verifications_pending", "payment_status", "referrer_coins_status"),
         Index("idx_referral_verifications_referrer", "referrer_external_id"),
+        # The slot count outer-joins through this FK to exclude numbers later disqualified as
+        # pre-existing Eaze accounts. Postgres does not index foreign keys on its own.
+        Index("idx_referral_verifications_intent", "referral_intent_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

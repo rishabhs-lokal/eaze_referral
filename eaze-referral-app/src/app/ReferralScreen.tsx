@@ -79,6 +79,17 @@ export function ReferralScreen() {
   const [codeLoading, setCodeLoading] = useState(true);
   const [codeError, setCodeError] = useState(false);
 
+  // The referrer's allowance. Server-owned on purpose: it is a per-person running total that
+  // survives across sessions and devices, so there is nothing on this page it could be derived
+  // from. `limit` stays null until the first load answers, and every branch below treats null
+  // as "not known yet" rather than as zero — guessing zero would show someone the exhausted
+  // state for a few hundred milliseconds before correcting itself.
+  const [referralsUsed, setReferralsUsed] = useState(0);
+  const [referralsLimit, setReferralsLimit] = useState<number | null>(null);
+  const referralsLeft = referralsLimit === null ? null : Math.max(0, referralsLimit - referralsUsed);
+  const outOfInvites = referralsLeft === 0;
+  const maxFields = Math.min(referralCopy.maxPhoneFields, referralsLeft ?? referralCopy.maxPhoneFields);
+
   const nextFieldId = useRef(0);
   const [fields, setFields] = useState<PhoneField[]>([{ id: 0, local: '', valid: false }]);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
@@ -98,6 +109,8 @@ export function ReferralScreen() {
   const [showAlreadyRegisteredPopup, setShowAlreadyRegisteredPopup] = useState(false);
   const [alreadyRegisteredNumbers, setAlreadyRegisteredNumbers] = useState<string[]>([]);
   const [showShareWarningPopup, setShowShareWarningPopup] = useState(false);
+  const [showLimitReachedPopup, setShowLimitReachedPopup] = useState(false);
+  const [limitRejectedNumbers, setLimitRejectedNumbers] = useState<string[]>([]);
   // Once per session. The warning has to land before the first paste, but a referrer copying a
   // second time has already read it, and a dialog on every copy would be dismissed unread —
   // which is the state we are trying to avoid.
@@ -116,7 +129,17 @@ export function ReferralScreen() {
     setCodeLoading(true);
     setCodeError(false);
     fetchReferralCode(referrerId)
-      .then((res) => setReferralCode(res))
+      .then((res) => {
+        setReferralCode(res);
+        setReferralsUsed(res.referralsUsed);
+        setReferralsLimit(res.referralsLimit);
+        // hasSavedNumbers gates the Copy button, and it used to start false on every visit —
+        // so a referrer who added numbers yesterday came back today and was told to add one
+        // before they could copy their own message. Harmless-looking until the cap existed;
+        // now someone who has used all their invites could never copy a message again, because
+        // the only thing that flipped this was a save they are no longer allowed to make.
+        if (res.referralsUsed > 0) setHasSavedNumbers(true);
+      })
       .catch(() => setCodeError(true))
       .finally(() => setCodeLoading(false));
   }, [referrerId]);
@@ -161,7 +184,7 @@ export function ReferralScreen() {
   };
 
   const addField = () => {
-    if (fields.length >= referralCopy.maxPhoneFields) return;
+    if (fields.length >= maxFields) return;
     nextFieldId.current += 1;
     setFields((prev) => [...prev, { id: nextFieldId.current, local: '', valid: false }]);
   };
@@ -209,6 +232,26 @@ export function ReferralScreen() {
       if (alreadyOnEaze.length > 0) {
         setAlreadyRegisteredNumbers(alreadyOnEaze);
         setShowAlreadyRegisteredPopup(true);
+      }
+
+      // The server is the authority on the allowance — it counts inside the same locked
+      // transaction that just wrote. Taking its word rather than decrementing locally keeps
+      // this correct when a sibling number was rejected, or when the same referrer has the
+      // page open twice.
+      setReferralsUsed(result.referralsUsed);
+      setReferralsLimit(result.referralsLimit);
+
+      // Reachable even though the form caps its own field count: another tab, a stale page
+      // loaded before an earlier save, or a referrer who was already over the limit when it
+      // was introduced. Whatever the route, these numbers did not save and saying so is the
+      // only way they find out.
+      const overLimit = result.skipped
+        .filter((s) => s.reason === 'referral_limit_reached')
+        .map((s) => s.phone);
+
+      if (overLimit.length > 0) {
+        setLimitRejectedNumbers(overLimit);
+        setShowLimitReachedPopup(true);
       }
 
       // Anything that did save is still a success, even if a sibling number was rejected —
@@ -304,8 +347,27 @@ export function ReferralScreen() {
             <Text style={styles.body}>{referralCopy.body}</Text>
           </View>
 
+          {outOfInvites ? (
+            // Everything that could add a referral goes away rather than being disabled — a
+            // dead form invites repeated attempts at something that cannot succeed. The invite
+            // card below deliberately stays: the friends already added still have to install
+            // and recharge, and this message is what gets them there.
+            <View style={styles.exhaustedCard}>
+              <Text style={styles.sectionTitle}>{referralCopy.invitesExhaustedTitle}</Text>
+              <Text style={styles.exhaustedBody}>
+                {referralCopy.invitesExhaustedBody(referralsLimit ?? 0)}
+              </Text>
+            </View>
+          ) : (
           <View style={styles.phoneSection}>
-            <Text style={styles.sectionTitle}>{referralCopy.phoneSectionTitle}</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>{referralCopy.phoneSectionTitle}</Text>
+              {referralsLeft !== null && referralsLimit !== null && (
+                <Text style={styles.invitesLeft}>
+                  {referralCopy.invitesLeft(referralsLeft, referralsLimit)}
+                </Text>
+              )}
+            </View>
             <Text style={styles.sectionBody}>{referralCopy.phoneSectionBody}</Text>
 
             <View style={styles.phoneFieldsGroup}>
@@ -342,7 +404,7 @@ export function ReferralScreen() {
               showError={showConsentError}
             />
 
-            {fields.length < referralCopy.maxPhoneFields && (
+            {fields.length < maxFields && (
               <TextButton
                 label={referralCopy.addAnotherNumber}
                 onPress={consentGiven ? addField : notifyConsentFirst}
@@ -351,6 +413,7 @@ export function ReferralScreen() {
 
             <PrimaryButton label={referralCopy.submitButton} onPress={handleSubmit} loading={submitting} />
           </View>
+          )}
 
           {codeLoading ? (
             <View style={styles.codeLoading}>
@@ -409,11 +472,19 @@ export function ReferralScreen() {
         bullets={popupCopy.shareWarning.bullets}
         primaryLabel={popupCopy.shareWarning.primaryLabel}
         onPrimary={() => setShowShareWarningPopup(false)}
-        secondaryLabel={popupCopy.shareWarning.secondaryLabel}
-        onSecondary={() => {
-          setShowShareWarningPopup(false);
-          scrollToPhoneSection();
-        }}
+        // "Add another number" is only an offer while there is a number to add. Shown to
+        // someone who has spent all three it scrolls them to a section that is no longer on the
+        // page — an action that visibly does nothing, on the one dialog whose whole purpose is
+        // to be believed.
+        secondaryLabel={outOfInvites ? undefined : popupCopy.shareWarning.secondaryLabel}
+        onSecondary={
+          outOfInvites
+            ? undefined
+            : () => {
+                setShowShareWarningPopup(false);
+                scrollToPhoneSection();
+              }
+        }
       />
 
       <Popup
@@ -442,6 +513,22 @@ export function ReferralScreen() {
           setShowAlreadyRegisteredPopup(false);
           scrollToPhoneSection();
         }}
+      />
+
+      <Popup
+        visible={showLimitReachedPopup}
+        onClose={() => setShowLimitReachedPopup(false)}
+        eyebrow={popupCopy.limitReached.eyebrow}
+        title={popupCopy.limitReached.title.replace('{{limit}}', String(referralsLimit ?? ''))}
+        // The rejected numbers sit between the two lines rather than at the top, so the
+        // sentence that introduces them is read first.
+        bullets={[
+          popupCopy.limitReached.bullets[0],
+          limitRejectedNumbers.join(', '),
+          popupCopy.limitReached.bullets[1],
+        ]}
+        primaryLabel={popupCopy.limitReached.primaryLabel}
+        onPrimary={() => setShowLimitReachedPopup(false)}
       />
 
       <Popup
@@ -534,6 +621,28 @@ const styles = StyleSheet.create({
   },
   phoneSection: {
     gap: 16,
+  },
+  exhaustedCard: {
+    gap: 8,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: white[10],
+  },
+  // Not sectionBody: that one carries marginTop: -8 to tuck under a section title in the form
+  // layout, which here cancels the card's own gap and jams the two lines together.
+  exhaustedBody: {
+    ...type.body2,
+    color: white[60],
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  invitesLeft: {
+    ...type.body3,
+    color: white[60],
   },
   sectionTitle: {
     ...type.title3,

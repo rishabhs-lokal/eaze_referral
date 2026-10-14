@@ -44,7 +44,15 @@ async def get_referral_code(user_id: str, session: AsyncSession = Depends(get_db
     await referral_service.record_first_login(session, decoded_id)
     user = await referral_service.get_or_create_user_by_external_ref(session, decoded_id)
     code = await referral_service.get_or_create_referral_code(session, user)
-    return ReferralCodeResponse(code=code, share_url=f"{settings.public_base_url}/r/{code}")
+    # Sent on every page load because the allowance is per referrer and persists across
+    # sessions — the page cannot work it out from anything it holds locally.
+    slots_used = await referral_service.count_referral_slots_used(session, user.id)
+    return ReferralCodeResponse(
+        code=code,
+        share_url=f"{settings.public_base_url}/r/{code}",
+        referrals_used=slots_used,
+        referrals_limit=settings.max_referrals_per_user,
+    )
 
 
 @router.post("/intents", response_model=SubmitIntentsResponse)
@@ -64,8 +72,8 @@ async def submit_intents(
         [p for p in body.phone_numbers_e164 if is_valid_indian_e164(p)], settings
     )
 
-    saved, skipped = await referral_service.submit_intents(
-        session, referrer, body.phone_numbers_e164, eaze_registered=eaze_registered
+    saved, skipped, slots_used, slots_limit = await referral_service.submit_intents(
+        session, referrer, body.phone_numbers_e164, settings, eaze_registered=eaze_registered
     )
 
     # Mirror only the phone numbers actually accepted as new referrals — not every raw
@@ -82,7 +90,12 @@ async def submit_intents(
             # user pressing Save; the referral is disqualified moments later if it fails.
             background_tasks.add_task(verification.verify_submitted_phone, phone, settings)
 
-    return SubmitIntentsResponse(saved=saved, skipped=[SkippedPhone(**s) for s in skipped])
+    return SubmitIntentsResponse(
+        saved=saved,
+        skipped=[SkippedPhone(**s) for s in skipped],
+        referrals_used=slots_used,
+        referrals_limit=slots_limit,
+    )
 
 
 @router.post("/copy-log", response_model=MessageCopyLogResponse)

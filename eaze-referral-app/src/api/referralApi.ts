@@ -3,6 +3,18 @@ import { API_BASE_URL } from './config';
 export type ReferralCodeResponse = {
   code: string;
   shareUrl: string;
+  // How much of this referrer's allowance is already spent, and what the allowance is. Both
+  // come from the server on every load: the allowance is per referrer and persists across
+  // sessions, so there is nothing local the page could work it out from.
+  referralsUsed: number;
+  referralsLimit: number;
+};
+
+export type SubmitIntentsResponse = {
+  saved: number;
+  skipped: { phone: string; reason: string }[];
+  referralsUsed: number;
+  referralsLimit: number;
 };
 
 export async function fetchReferralCode(referrerUserId: string): Promise<ReferralCodeResponse> {
@@ -14,7 +26,7 @@ export async function fetchReferralCode(referrerUserId: string): Promise<Referra
 export async function submitReferralIntents(params: {
   referrerUserId: string;
   phoneNumbersE164: string[];
-}): Promise<{ saved: number; skipped: { phone: string; reason: string }[] }> {
+}): Promise<SubmitIntentsResponse> {
   const res = await fetch(`${API_BASE_URL}/api/referral/intents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

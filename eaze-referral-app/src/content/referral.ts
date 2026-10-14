@@ -43,7 +43,17 @@ export const referralCopy = {
   // exactly one went through would misreport what actually happened.
   submitSuccessToast: (saved: number) => (saved === 1 ? 'Friend added' : `${saved} friends added`),
   submitFailedToast: "Couldn't add your friend, try again",
+  // Hard ceiling on how many fields can be on screen at once. The real limit is the referrer's
+  // remaining allowance, which the API reports — this only stops the form growing past anything
+  // anyone could ever submit, for the case where the cap is raised server-side.
   maxPhoneFields: 5,
+  // The allowance, stated where it is about to bite rather than only in the Terms. Singular at
+  // one left because "1 invites left" is the kind of thing people notice and nothing else is.
+  invitesLeft: (left: number, limit: number) =>
+    left === 1 ? `1 of ${limit} invites left` : `${left} of ${limit} invites left`,
+  invitesExhaustedTitle: "You've used all your invites",
+  invitesExhaustedBody: (limit: number) =>
+    `You've referred ${limit} friends, which is the most this program allows. Your invite message still works for the friends you've already added — they just need to download Eaze and make their first recharge.`,
   missingLinkHeadline: 'Open this from the Eaze app',
   missingLinkBody: "This page only works when it's opened through the Refer a friend banner in Eaze.",
   backButtonLabel: 'Go back',
@@ -84,9 +94,12 @@ export const termsSections = [
       privacy: { label: 'Privacy Policy', url: 'https://www.eazeapp.com/privacypolicy' },
     },
   },
+  // The three-referral cap is stated here in words, as legal text has to be. The enforced
+  // number lives in MAX_REFERRALS_PER_USER on the service — raising it means editing this
+  // sentence too, or the Terms will promise a limit the program no longer applies.
   {
     title: 'How Referrals Work',
-    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. Sharing the invitation message or the download link does not, by itself, create a referral: if a person installs Eaze App through your link but you did not submit their phone number on the Referral Page, no referral exists for them and no coins will be credited to you or to them. You may not refer your own phone number. Before any phone number can be entered, you must tick the declaration shown on the Referral Page; no number can be entered or submitted until you do. By ticking it you confirm that you have that person’s permission to share their phone number with Eaze App for the purpose of this referral program, and that you accept these Terms.',
+    body: 'You take part by entering your friend’s phone number on the Referral Page, which can only be reached through the "Refer a friend" banner inside the Eaze App. A referral is created the moment you submit a valid, correctly-formatted number — there is no code or link your friend needs to enter. Each phone number can be claimed by only one referrer; if a number has already been submitted by someone else, your submission will not create a referral. You may refer a maximum of three phone numbers under this program. Once you have submitted three, no further numbers can be entered, and any additional number you attempt to submit will not create a referral and will not earn coins for you or for that person. A number that is not accepted — because it is already registered on Eaze App, because it has already been claimed by another referrer, or because it is not a valid mobile number — does not count towards this limit. Sharing the invitation message or the download link does not, by itself, create a referral: if a person installs Eaze App through your link but you did not submit their phone number on the Referral Page, no referral exists for them and no coins will be credited to you or to them. You may not refer your own phone number. Before any phone number can be entered, you must tick the declaration shown on the Referral Page; no number can be entered or submitted until you do. By ticking it you confirm that you have that person’s permission to share their phone number with Eaze App for the purpose of this referral program, and that you accept these Terms.',
   },
   {
     title: 'Verification',
@@ -145,6 +158,19 @@ export const popupCopy = {
       'Try a friend who has not used Eaze before.',
     ],
     primaryLabel: 'Use a different number',
+  },
+  // Shown when a submission runs into the cap — either partially (some numbers saved, the rest
+  // did not) or entirely. Names the numbers that did not save, for the same reason the
+  // already-registered popup does: the referrer typed a valid number, pressed the button, and
+  // has to be able to see which one did not land rather than inferring it from a count.
+  limitReached: {
+    eyebrow: 'Invite limit reached',
+    title: 'You can refer up to {{limit}} friends',
+    bullets: [
+      'These numbers were not saved, and no coins can be earned for them:',
+      'The friends you have already added are unaffected — they still earn you both coins when they recharge.',
+    ],
+    primaryLabel: 'Got it',
   },
   // Fires the moment the message reaches the clipboard — the last point at which the referrer
   // can still choose who to send it to. The whole programme turns on a fact the message itself

@@ -69,6 +69,20 @@ class Settings(BaseSettings):
     signup_bonus_coins: int
     recharge_bonus_coins: int
 
+    # How many friends one referrer may ever refer. A slot is consumed the moment a number is
+    # accepted into referral_intents — not when it signs up, and not when it pays. Three picks
+    # that go nowhere is exactly the outcome a cap exists to bound.
+    #
+    # The one refund: a number later found to be an existing Eaze account releases its slot.
+    # phone_check_timeout_seconds means the synchronous check can time out and the number saves
+    # anyway, with the background check disqualifying it minutes later. Charging a slot for a
+    # rejection the referrer never saw and cannot fix would be invisible and unearned.
+    #
+    # Config rather than a constant so the number can be changed with a ConfigMap edit. The page
+    # reads it from GET /api/referral/code/{user_id} rather than inlining it at build time, so
+    # changing it here changes what users see without a rebuild.
+    max_referrals_per_user: int = 3
+
     # Optional mirror of every accepted referral into a Google Sheet, via an Apps Script Web
     # App endpoint — see google-apps-script/referral_sheet_webhook.gs for the script and its
     # deployment steps. Unset (the default) means the feature is entirely off: submit_intents

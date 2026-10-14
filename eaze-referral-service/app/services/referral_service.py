@@ -117,12 +117,42 @@ async def get_or_create_referral_code(session: AsyncSession, user: User) -> str:
     return result.scalar_one()
 
 
+async def count_referral_slots_used(session: AsyncSession, referrer_user_id: int) -> int:
+    """How many of this referrer's allowance is spent.
+
+    One slot per accepted referral_intents row, with a single exception: a number whose
+    verification row reads ALREADY_REGISTERED is not counted. That verdict is reached by our own
+    background check AFTER the number saved — the synchronous check at save time is bounded by
+    phone_check_timeout_seconds and gives up rather than making Save hang. A referrer who entered
+    a number, saw it accepted, and was then silently charged a slot for a referral that can never
+    pay has no way to see what happened or to undo it.
+
+    Everything else counts, deliberately. Expired, signed-up-but-never-paid, never-installed —
+    those are picks that did not work out, which is the thing a cap is for.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(ReferralIntent.__table__)
+        .outerjoin(
+            ReferralVerification.__table__,
+            ReferralVerification.referral_intent_id == ReferralIntent.id,
+        )
+        .where(
+            ReferralIntent.referrer_user_id == referrer_user_id,
+            func.coalesce(ReferralVerification.phone_check_status, "UNCHECKED")
+            != "ALREADY_REGISTERED",
+        )
+    )
+    return result.scalar_one()
+
+
 async def submit_intents(
     session: AsyncSession,
     referrer: User,
     phone_numbers: list[str],
+    settings: Settings,
     eaze_registered: set[str] | None = None,
-) -> tuple[int, list[dict]]:
+) -> tuple[int, list[dict], int, int]:
     """A number is only ever accepted into referral_intents when it doesn't already exist
     there (enforced below AND by the table's own UNIQUE constraint as a second line of
     defense — see referral_intents_phone_e164_key) and isn't already a registered Eaze user
@@ -135,11 +165,28 @@ async def submit_intents(
     before calling this. Both produce the identical `already_registered` reason on purpose: to
     the referrer it is one situation ("your friend is already on Eaze"), and the caller should
     not have to care which source established it.
+
+    A referrer may hold at most settings.max_referrals_per_user accepted referrals. Numbers
+    beyond that are skipped with `referral_limit_reached` in the order they were submitted, so a
+    referrer with one slot left who submits three numbers gets the first one saved rather than
+    the whole submission refused.
+
+    Returns (saved, skipped, slots_used_after, slots_limit) — the caller reports the last two
+    back to the page so it can show what is left without a second round trip.
     """
     saved = 0
     skipped: list[dict] = []
+    limit = settings.max_referrals_per_user
 
     async with transaction(session):
+        # Serialise this referrer's submissions against each other. Counting and then inserting
+        # without this is a read-modify-write race: two tabs both read "2 used", both decide
+        # they have room, and the referrer lands on 4. Locking the referrer's own users row is
+        # the cheapest thing that makes the count authoritative for the rest of the transaction,
+        # and it blocks nobody else — every other referrer locks a different row.
+        await session.execute(select(User.id).where(User.id == referrer.id).with_for_update())
+        slots_used = await count_referral_slots_used(session, referrer.id)
+
         valid_phones = [p for p in phone_numbers if is_valid_indian_e164(p)]
         registered_result = await session.execute(
             select(User.phone_e164).where(User.phone_e164.in_(valid_phones))
@@ -159,6 +206,12 @@ async def submit_intents(
                 continue
             if is_likely_fake(phone):
                 skipped.append({"phone": phone, "reason": "likely_fake"})
+                continue
+            # Last gate before the row exists, so a number rejected for any reason above is
+            # reported for that reason rather than being blamed on the cap — and, more to the
+            # point, does not consume a slot.
+            if slots_used + saved >= limit:
+                skipped.append({"phone": phone, "reason": "referral_limit_reached"})
                 continue
 
             stmt = (
@@ -189,7 +242,7 @@ async def submit_intents(
                 .on_conflict_do_nothing(index_elements=["phone_e164"])
             )
 
-    return saved, skipped
+    return saved, skipped, slots_used + saved, limit
 
 
 async def signup_match(session: AsyncSession, phone_e164: str, settings: Settings) -> dict:
