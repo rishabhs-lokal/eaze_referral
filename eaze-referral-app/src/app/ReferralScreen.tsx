@@ -66,6 +66,16 @@ function headlineTypeFor(viewportWidth: number) {
   return { fontSize, lineHeight: Math.round(fontSize * 1.125) };
 }
 
+// A backend predating the cap answers /code/{user_id} without the two count fields. They are
+// typed as numbers, so TypeScript does not catch their absence and `limit - used` evaluates to
+// NaN — which renders verbatim as "NaN of undefined invites left". Serving the page from the API
+// it calls makes that mismatch impossible in production, but nothing enforces same-origin for a
+// page pointed at another host, and a count that cannot be trusted has to read as unknown rather
+// than as arithmetic. null means unknown, and every branch below already handles it.
+function asCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 type PhoneField = { id: number; local: string; valid: boolean };
 
 export function ReferralScreen() {
@@ -131,8 +141,8 @@ export function ReferralScreen() {
     fetchReferralCode(referrerId)
       .then((res) => {
         setReferralCode(res);
-        setReferralsUsed(res.referralsUsed);
-        setReferralsLimit(res.referralsLimit);
+        setReferralsUsed(asCount(res.referralsUsed) ?? 0);
+        setReferralsLimit(asCount(res.referralsLimit));
         // hasSavedNumbers gates the Copy button, and it used to start false on every visit —
         // so a referrer who added numbers yesterday came back today and was told to add one
         // before they could copy their own message. Harmless-looking until the cap existed;
@@ -238,8 +248,8 @@ export function ReferralScreen() {
       // transaction that just wrote. Taking its word rather than decrementing locally keeps
       // this correct when a sibling number was rejected, or when the same referrer has the
       // page open twice.
-      setReferralsUsed(result.referralsUsed);
-      setReferralsLimit(result.referralsLimit);
+      setReferralsUsed(asCount(result.referralsUsed) ?? 0);
+      setReferralsLimit(asCount(result.referralsLimit));
 
       // Reachable even though the form caps its own field count: another tab, a stale page
       // loaded before an earlier save, or a referrer who was already over the limit when it

@@ -206,12 +206,15 @@ export const popupCopy = {
 // no code and the link identifies nobody.
 export function buildShareMessage(): string {
   return [
-    "Hey, I've been using Eaze for a while now and thought you'd like it.",
-    // "on your first recharge" is the load-bearing phrase and must not be softened to something
-    // that reads as a signup bonus. Coins move only after a confirmed payment (T&C §4), so a
-    // message promising them at install would have every new user wondering, correctly, where
-    // their coins went. This string is what people actually read — long before the Terms.
-    `The nice bit is you get ${REWARD_COINS} coins on your first recharge, so you're basically starting ahead. Took me about two minutes to set up.`,
+    // "three invites" is only true because of MAX_REFERRALS_PER_USER on the service. Raising the
+    // cap means editing this line, exactly as it means editing T&C §2 — a message that promises a
+    // number the programme no longer enforces is worse than one that promises nothing.
+    "Hey, Eaze gives me three invites and I'm using one on you.",
+    // "once you make your first recharge" is the load-bearing phrase and must not be softened to
+    // anything that reads as a signup bonus. Coins move only after a confirmed payment (T&C §4),
+    // so a message promising them at install would have every new user wondering, correctly,
+    // where their coins went. This string is what people actually read — long before the Terms.
+    `You get ${REWARD_COINS} bonus coins once you make your first recharge. I've been on it for some time now and it's worth a try.`,
     `💰 Here you go: ${DOWNLOAD_URL}`,
     // Paragraphs are single lines joined by blank lines, never hard-wrapped mid-sentence: the
     // receiving chat app does its own wrapping, and baked-in line breaks that looked right at
