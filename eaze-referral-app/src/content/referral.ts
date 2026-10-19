@@ -52,8 +52,18 @@ export const referralCopy = {
   invitesLeft: (left: number, limit: number) =>
     left === 1 ? `1 of ${limit} invites left` : `${left} of ${limit} invites left`,
   invitesExhaustedTitle: "You've used all your invites",
-  invitesExhaustedBody: (limit: number) =>
-    `You've referred ${limit} friends, which is the most this program allows. Your invite message still works for the friends you've already added — they just need to download Eaze and make their first recharge.`,
+  // Takes the real count, not just the limit. Interpolating the limit alone told anyone sitting
+  // ABOVE it that they had referred exactly the cap — a referrer with five was read back "you've
+  // referred 3 friends", which is simply false about something they did. Referrers can be over
+  // the cap whenever it is lowered, so this is a permanent case, not a migration artifact.
+  invitesExhaustedBody: (used: number, limit: number) => {
+    const friends = used === 1 ? '1 friend' : `${used} friends`;
+    const tail =
+      "Your invite message still works for the friends you've already added — they just need to download Eaze and make their first recharge.";
+    return used > limit
+      ? `You've referred ${friends}. This program allows ${limit}, so you can't add any more. ${tail}`
+      : `You've referred ${friends}, which is the most this program allows. ${tail}`;
+  },
   missingLinkHeadline: 'Open this from the Eaze app',
   missingLinkBody: "This page only works when it's opened through the Refer a friend banner in Eaze.",
   backButtonLabel: 'Go back',

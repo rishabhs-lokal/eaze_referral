@@ -365,7 +365,7 @@ export function ReferralScreen() {
             <View style={styles.exhaustedCard}>
               <Text style={styles.sectionTitle}>{referralCopy.invitesExhaustedTitle}</Text>
               <Text style={styles.exhaustedBody}>
-                {referralCopy.invitesExhaustedBody(referralsLimit ?? 0)}
+                {referralCopy.invitesExhaustedBody(referralsUsed, referralsLimit ?? 0)}
               </Text>
             </View>
           ) : (
