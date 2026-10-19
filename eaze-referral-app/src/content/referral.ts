@@ -206,10 +206,12 @@ export const popupCopy = {
 // no code and the link identifies nobody.
 export function buildShareMessage(): string {
   return [
-    // "three invites" is only true because of MAX_REFERRALS_PER_USER on the service. Raising the
-    // cap means editing this line, exactly as it means editing T&C §2 — a message that promises a
-    // number the programme no longer enforces is worse than one that promises nothing.
-    "Hey, Eaze gives me three invites and I'm using one on you.",
+    // Deliberately says nothing about how many invites the sender has. The previous opening
+    // ("Eaze gives me three invites") hard-coded the cap into a string every user reads, which
+    // made MAX_REFERRALS_PER_USER impossible to change without also changing this file and T&C
+    // §2 in step. The Terms still state the limit, because that is where a limit belongs; the
+    // message no longer has to.
+    "Hey, I would love to invite you on Eaze.",
     // "once you make your first recharge" is the load-bearing phrase and must not be softened to
     // anything that reads as a signup bonus. Coins move only after a confirmed payment (T&C §4),
     // so a message promising them at install would have every new user wondering, correctly,
