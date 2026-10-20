@@ -105,6 +105,10 @@ class ReconcileResponse(CamelModel):
     signup_coins_credited: int = 0
     payments_confirmed: int = 0
     coins_credited: int = 0
+    # Payments confirmed this pass whose coins are waiting for the nightly payout window.
+    # Reported because a row at PAID with PENDING coins is otherwise indistinguishable from a
+    # stuck payout, and a night where the window was missed entirely would look like a quiet one.
+    payouts_awaiting_window: int = 0
     error: str | None = None
 
 

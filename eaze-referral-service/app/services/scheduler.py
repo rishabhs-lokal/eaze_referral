@@ -17,13 +17,14 @@ automatically if a pod dies holding it, because it lives on the connection.
 """
 
 import asyncio
+import datetime as dt
 import logging
 
 from sqlalchemy import text
 
 from app.config import Settings
 from app.db import get_engine, get_sessionmaker
-from app.services import verification
+from app.services import payout_window, verification
 
 logger = logging.getLogger("eaze_referral.scheduler")
 
@@ -60,13 +61,37 @@ async def _run_one_pass(settings: Settings) -> None:
             )
 
 
+def _sleep_seconds(settings: Settings) -> float:
+    """How long to wait before the next pass.
+
+    Normally the configured interval. But coins are only credited inside the payout window, and
+    a plain fixed interval can step straight over a 30-minute window: a pod that restarts at
+    00:29 next ticks at 00:44, the window has closed, and every payout confirmed that day waits
+    another 24 hours. Nothing in the pass itself can recover from that, because by the time it
+    runs the window is gone.
+
+    So when the next window opens sooner than the next tick would, wait for the window instead.
+    A pass is then guaranteed at window open regardless of when the process started, and the
+    interval still governs the rest of the day.
+    """
+    interval = float(settings.reconcile_interval_seconds)
+    if not payout_window.is_enabled(settings):
+        return interval
+    until_open = payout_window.seconds_until_open(dt.datetime.now(dt.timezone.utc), settings)
+    # 0 means the window is open right now, in which case the normal interval keeps passes
+    # running through it rather than busy-looping.
+    if until_open == 0:
+        return interval
+    return min(interval, until_open)
+
+
 async def reconcile_loop(settings: Settings) -> None:
     """Forever: wait, then run a pass. Cancelled on shutdown."""
     interval = settings.reconcile_interval_seconds
-    logger.info("reconcile loop started, every %ss", interval)
+    logger.info("reconcile loop started, every %ss, %s", interval, payout_window.describe(settings))
     while True:
         try:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(_sleep_seconds(settings))
             await _run_one_pass(settings)
         except asyncio.CancelledError:
             logger.info("reconcile loop stopping")

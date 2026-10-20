@@ -2,6 +2,7 @@
 into here; every multi-statement operation owns its own transaction (`async with transaction(session)`)
 so a router never has to know about commit/rollback."""
 
+import datetime as dt
 import hashlib
 import logging
 
@@ -24,7 +25,7 @@ from app.models import (
     User,
     WalletTransaction,
 )
-from app.services import eaze_wallet
+from app.services import eaze_wallet, payout_window
 from app.services.codes import generate_referral_code
 from app.services.db_helpers import transaction
 from app.services.phone import is_likely_fake, is_valid_indian_e164
@@ -462,6 +463,16 @@ async def credit_both_on_payment(
     if check.scalar_one_or_none() == "ALREADY_REGISTERED":
         return {"eligible": False, "reason": "phone_already_registered", "credited": []}
 
+    # Coins only leave the building inside the nightly window. Gated HERE rather than in the
+    # reconciler because this is the only function that moves referral coins — the recharge
+    # webhook calls it too, and a webhook-triggered payout at 3pm would otherwise walk straight
+    # past the window the reconciler respects.
+    #
+    # The payment itself is still recorded below: it is true whenever it happened, and recording
+    # it stops the row being re-queried every pass. Only the coin statuses stay PENDING, which is
+    # exactly what keeps the row in the reconciler's queue until the window opens.
+    deferred = not payout_window.is_open(dt.datetime.now(dt.timezone.utc), settings)
+
     # Each side is paid independently so a failure on one can't strand the other: the friend
     # getting their coins while the referrer's call fails leaves the referrer retryable, not
     # lost. Eaze ids are resolved per side — the friend's from Redash, the referrer's from the
@@ -470,10 +481,16 @@ async def credit_both_on_payment(
 
     credited: list[str] = []
     failures: list[str] = []
-    for who, wallet_user_id, amount, tx_type in (
+    # Sides that need no further action: credited just now, or already paid by an earlier call
+    # whose ledger row ON CONFLICT swallowed below. Tracked separately from `credited` because
+    # only this set may be marked CREDITED — `failures` being empty is NOT the same thing, and
+    # conflating them is how a deferred payout would get stamped as paid.
+    settled: set[str] = set()
+    sides = (
         ("referred", referred_user_id, settings.signup_bonus_coins, "REFERRAL_SIGNUP_BONUS"),
         ("referrer", referrer_user_id, settings.recharge_bonus_coins, "REFERRAL_RECHARGE_BONUS"),
-    ):
+    )
+    for who, wallet_user_id, amount, tx_type in (() if deferred else sides):
         # The ledger row is claimed FIRST. If ON CONFLICT swallows it, this side was already
         # paid and no API call is made — that's what stops a retry double-crediting a real
         # wallet, which no amount of care at the HTTP layer could undo.
@@ -491,7 +508,8 @@ async def credit_both_on_payment(
         )
         ledger_row = ledger.first()
         if ledger_row is None:
-            continue  # already paid
+            settled.add(who)  # already paid by an earlier call; nothing to send
+            continue
 
         try:
             await _hand_coins_to_eaze(eaze_ids[who], amount, settings)
@@ -515,6 +533,7 @@ async def credit_both_on_payment(
             .values(wallet_balance=User.wallet_balance + amount)
         )
         credited.append(who)
+        settled.add(who)
 
     # The payment itself is confirmed regardless of whether the payout succeeded — that part is
     # true either way, and recording it stops the payment being re-queried every pass.
@@ -531,13 +550,13 @@ async def credit_both_on_payment(
     # payout as credited would be the worst outcome available here: the row would stop matching
     # the reconciler's PENDING queue, so it would never be retried, and the user would be
     # permanently owed coins while every dashboard reported them paid.
-    if "referred" not in failures:
+    if "referred" in settled:
         values["signup_coins_status"] = "CREDITED"
         values["signup_coins_amount"] = settings.signup_bonus_coins
         values["signup_coins_credited_at"] = func.coalesce(
             ReferralVerification.signup_coins_credited_at, func.now()
         )
-    if "referrer" not in failures:
+    if "referrer" in settled:
         values["referrer_coins_status"] = "CREDITED"
         values["referrer_coins_amount"] = settings.recharge_bonus_coins
         values["referrer_coins_credited_at"] = func.coalesce(
@@ -545,6 +564,10 @@ async def credit_both_on_payment(
         )
     if failures:
         values["last_error"] = f"coin credit failed for: {', '.join(failures)}"
+    elif deferred:
+        # Not an error — a scheduled wait. Recorded so a row sitting at PAID with PENDING coins
+        # reads as deliberate rather than as a payout nobody can account for.
+        values["last_error"] = f"awaiting {payout_window.describe(settings)}"
     else:
         values["last_error"] = None
 
@@ -554,9 +577,11 @@ async def credit_both_on_payment(
         .values(**values)
     )
 
-    # REWARDED means the referral is fully settled, so it is only set once both sides are paid.
-    # A partial payout stays SIGNED_UP and keeps showing up as outstanding work.
-    if not failures:
+    # REWARDED means the referral is fully settled, so it is only set once both sides are
+    # genuinely paid. A partial payout — or one still waiting for the payout window — stays
+    # SIGNED_UP and keeps showing up as outstanding work. Keyed on `settled` rather than on
+    # `not failures`, because a deferred payout has no failures and has paid nobody.
+    if {"referred", "referrer"} <= settled:
         await session.execute(
             update(Referral.__table__)
             .where(Referral.id == referral_id)
@@ -570,9 +595,10 @@ async def credit_both_on_payment(
 
     return {
         "eligible": True,
-        "reason": None,
+        "reason": "deferred_to_payout_window" if deferred else None,
         "credited": credited,
         "failed": failures,
+        "deferred": deferred,
     }
 
 

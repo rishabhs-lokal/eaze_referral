@@ -160,6 +160,21 @@ class Settings(BaseSettings):
     # defensible rather than merely convenient. 0 disables expiry entirely.
     referral_expiry_days: int = 90
 
+    # When referral coins are allowed to reach a real wallet. Payments are still CONFIRMED
+    # every pass, all day — only the call to the coin API waits for this window.
+    #
+    # Why a window at all: every Lokal tool credits through the same shared free-coins endpoint,
+    # and granting a user coins twice in one day is the case that misbehaves. Paying in the first
+    # minutes of the IST day puts this service ahead of every other tool's daytime grants, which
+    # avoids the collision by construction instead of detecting it afterwards.
+    #
+    # Its own timezone, deliberately separate from db_timezone and redash_timestamp_timezone.
+    # Those three answer different questions and conflating two of them has already cost this
+    # codebase one near-miss on a real payout.
+    payout_window_start: str = "00:00"
+    payout_window_minutes: int = 30
+    payout_window_timezone: str = "Asia/Kolkata"
+
     public_base_url: str = "http://localhost:8000"
     play_store_url: str = "https://play.google.com/store/apps/details?id=com.eaze.app"
     app_store_url: str = "https://apps.apple.com/app/idXXXXXXXXX"

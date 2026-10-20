@@ -468,6 +468,7 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
         "signup_coins_credited": 0,
         "payments_confirmed": 0,
         "coins_credited": 0,
+        "payouts_awaiting_window": 0,
     }
     if not rows:
         return {"ran": True, "checked": 0, **empty}
@@ -594,13 +595,25 @@ async def reconcile(session: AsyncSession, settings: Settings, limit: int | None
                 logger.warning("payout failed for %s", row.phone_e164, exc_info=True)
                 continue
 
-            if "referred" in moved:
-                stats["signup_coins_credited"] += 1
-            if "referrer" in moved:
-                stats["coins_credited"] += 1
+            # `is`, not `==`: the sentinel IS an empty list, so == would also match a payout
+            # where both sides were already settled and nothing needed sending.
+            if moved is _DEFERRED:
+                # Confirmed as paid and queued for the window. Counted so a night where the
+                # window was missed entirely is visible as a number, not as a quiet pass.
+                stats["payouts_awaiting_window"] += 1
+            else:
+                if "referred" in moved:
+                    stats["signup_coins_credited"] += 1
+                if "referrer" in moved:
+                    stats["coins_credited"] += 1
 
     await _stamp_checked(session, [r.id for r in rows])
     return stats
+
+
+# Distinguishes "nothing moved because it is waiting for the window" from "nothing moved because
+# both sides were already paid" — both are an empty credited list, and only one of them is news.
+_DEFERRED: list[str] = []
 
 
 async def _pay_out(
@@ -640,25 +653,27 @@ async def _pay_out(
 
     if result["eligible"]:
         failed = result.get("failed", [])
+
+        # Never report a side as credited when its wallet call failed, and never when it is
+        # merely waiting for the payout window — the sheet is what people look at to answer "did
+        # they get their coins", so it has to distinguish paid, failed and not-yet rather than
+        # quietly showing a payout that has not happened. `failed` is empty in BOTH the success
+        # and the deferred case, so deferral has to be checked on its own.
+        def _side(who: str, amount: int) -> str:
+            if who in failed:
+                return "Failed — will retry"
+            if result.get("deferred"):
+                return "Due at the next payout window"
+            return f"Credited {amount}"
+
         await update_sheet_status(
             row.phone_e164,
             settings,
             payment="Paid",
-            # Never report a side as credited when its wallet call failed — the sheet is what
-            # people look at to answer "did they get their coins", so it has to say "failed"
-            # rather than quietly showing a payout that never happened.
-            friend_coins=(
-                "Failed — will retry"
-                if "referred" in failed
-                else f"Credited {settings.signup_bonus_coins}"
-            ),
-            referrer_coins=(
-                "Failed — will retry"
-                if "referrer" in failed
-                else f"Credited {settings.recharge_bonus_coins}"
-            ),
+            friend_coins=_side("referred", settings.signup_bonus_coins),
+            referrer_coins=_side("referrer", settings.recharge_bonus_coins),
         )
-    return result["credited"]
+    return _DEFERRED if result.get("deferred") else result["credited"]
 
 
 async def _stamp_checked(session: AsyncSession, row_ids: list[int]) -> None:
