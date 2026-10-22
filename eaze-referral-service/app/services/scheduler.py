@@ -64,31 +64,46 @@ async def _run_one_pass(settings: Settings) -> None:
 def _sleep_seconds(settings: Settings) -> float:
     """How long to wait before the next pass.
 
-    Normally the configured interval. But coins are only credited inside the payout window, and
-    a plain fixed interval can step straight over a 30-minute window: a pod that restarts at
-    00:29 next ticks at 00:44, the window has closed, and every payout confirmed that day waits
-    another 24 hours. Nothing in the pass itself can recover from that, because by the time it
-    runs the window is gone.
+    With a payout window configured the loop runs ONLY inside it: closed, it sleeps straight
+    through to the next opening; open, it ticks at `reconcile_interval_seconds` so several
+    passes fit in the window. There is no all-day cadence any more.
 
-    So when the next window opens sooner than the next tick would, wait for the window instead.
-    A pass is then guaranteed at window open regardless of when the process started, and the
-    interval still governs the rest of the day.
+    That means the reconcile pass — which is also what confirms payments against Redash — runs
+    once a night rather than every 15 minutes. Deliberate, and the cost is stated where it will
+    be noticed: the funnel, the verification summary and the Google Sheet only advance in the
+    window, so during the day they describe last night. Nothing is lost, only delayed; the
+    queue is durable and a payment confirmed at noon is still confirmed at midnight.
+
+    Sleeping exactly to the opening rather than ticking past it is what makes a pass certain at
+    window open whatever time the process started. A fixed interval would step over a 30-minute
+    window after an awkward restart — up at 00:29, next tick 00:44, window gone, every due
+    payout waiting another 24 hours with no symptom but silence.
+
+    With the window disabled (PAYOUT_WINDOW_MINUTES=0) this falls back to the plain interval,
+    which is how the service behaved before the window existed.
     """
     interval = float(settings.reconcile_interval_seconds)
     if not payout_window.is_enabled(settings):
         return interval
     until_open = payout_window.seconds_until_open(dt.datetime.now(dt.timezone.utc), settings)
-    # 0 means the window is open right now, in which case the normal interval keeps passes
-    # running through it rather than busy-looping.
+    # 0 means the window is open right now: tick at the interval so the queue gets several
+    # passes before it closes, rather than busy-looping or waiting out the whole window.
     if until_open == 0:
         return interval
-    return min(interval, until_open)
+    return until_open
 
 
 async def reconcile_loop(settings: Settings) -> None:
     """Forever: wait, then run a pass. Cancelled on shutdown."""
     interval = settings.reconcile_interval_seconds
-    logger.info("reconcile loop started, every %ss, %s", interval, payout_window.describe(settings))
+    if payout_window.is_enabled(settings):
+        logger.info(
+            "reconcile loop started: passes ONLY inside the %s, every %ss while it is open",
+            payout_window.describe(settings),
+            interval,
+        )
+    else:
+        logger.info("reconcile loop started, every %ss, payout window disabled", interval)
     while True:
         try:
             await asyncio.sleep(_sleep_seconds(settings))

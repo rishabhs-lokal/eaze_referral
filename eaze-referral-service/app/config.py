@@ -139,12 +139,18 @@ class Settings(BaseSettings):
     # Some deployments of this endpoint want a human-readable batch label alongside the file.
     eaze_free_coins_batch_name: str = "Eaze Referral Program"
 
-    # How often the service re-checks who has paid and credits them, in seconds. This is what
-    # makes payouts happen on their own — nothing else triggers them, because a referred person
-    # paying is an event inside Eaze that nobody tells this service about. Set to 0 to disable
-    # the loop entirely and drive POST /api/referral/admin/reconcile yourself.
-    # 15 minutes trades a little payout latency against Redash load; every pass costs two
-    # warehouse queries.
+    # How often a pass runs WHILE THE PAYOUT WINDOW IS OPEN, in seconds. With a window
+    # configured the loop does not tick during the day at all — it sleeps to the next opening,
+    # then ticks at this interval until the window closes. Set to 0 to disable the loop entirely
+    # and drive POST /api/referral/admin/reconcile yourself.
+    #
+    # This sets the night's throughput ceiling. A 30-minute window at 900s fits two passes, and
+    # each pass covers at most redash_batch_size rows, so ~400 referrals can settle per night.
+    # Far above current volume; lower this if the queue ever outgrows it, which
+    # oldest_pending_checked_at sliding by more than a day would show.
+    #
+    # With the window disabled this is once again the all-day cadence, which is why it stays at
+    # 15 minutes rather than something short: every pass costs two warehouse queries.
     reconcile_interval_seconds: int = 900
     # After this many days with no signup at all, stop asking Redash about a referral.
     #

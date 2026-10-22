@@ -125,3 +125,85 @@ def test_unparseable_start_falls_back_to_midnight():
 def test_describe_names_the_window_for_the_logs():
     assert "00:00" in payout_window.describe(_settings())
     assert "disabled" in payout_window.describe(_settings(payout_window_minutes=0))
+
+
+# --- scheduler behaviour: the loop runs ONLY inside the window ---------------------------------
+
+
+def test_scheduler_sleeps_through_the_whole_day_to_the_next_window():
+    """The 15-minute all-day cadence is gone. Closed, the loop waits for the opening rather
+    than waking repeatedly to discover it still cannot pay anyone."""
+    import unittest.mock as mock
+
+    from app.services import scheduler
+
+    s = _settings()
+
+    class At(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _utc(2026, 10, 19, 6, 30)  # 12:00 IST, mid-afternoon in the window's day
+
+    with mock.patch.object(scheduler.dt, "datetime", At):
+        slept = scheduler._sleep_seconds(s)
+
+    # 12:00 IST -> 00:00 IST is 12 hours away, and must be ONE sleep, not 48 ticks.
+    assert slept == pytest.approx(12 * 3600, abs=60)
+    assert slept > settings_interval(s), "must not fall back to the old interval"
+
+
+def settings_interval(s: Settings) -> float:
+    return float(s.reconcile_interval_seconds)
+
+
+def test_scheduler_ticks_at_the_interval_while_the_window_is_open():
+    """Inside the window several passes should fit, so the queue drains rather than getting one
+    shot a night."""
+    import unittest.mock as mock
+
+    from app.services import scheduler
+
+    s = _settings()
+
+    class At(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _utc(2026, 10, 19, 18, 35)  # 00:05 IST, window open
+
+    with mock.patch.object(scheduler.dt, "datetime", At):
+        assert scheduler._sleep_seconds(s) == settings_interval(s)
+
+
+def test_scheduler_waits_for_an_imminent_window_rather_than_stepping_over_it():
+    """The restart case the alignment exists for: a fixed interval from 23:50 IST would next
+    fire at 00:05 — inside the window by luck — but from 00:29 it would fire at 00:44, with the
+    window closed and a day of payouts stranded."""
+    import unittest.mock as mock
+
+    from app.services import scheduler
+
+    s = _settings()
+
+    class At(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _utc(2026, 10, 19, 18, 20)  # 23:50 IST, 10 min before open
+
+    with mock.patch.object(scheduler.dt, "datetime", At):
+        assert scheduler._sleep_seconds(s) == pytest.approx(600, abs=5)
+
+
+def test_scheduler_keeps_the_plain_interval_when_the_window_is_disabled():
+    import unittest.mock as mock
+
+    from app.services import scheduler
+
+    s = _settings(payout_window_minutes=0)
+
+    class At(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _utc(2026, 10, 19, 6, 30)
+
+    with mock.patch.object(scheduler.dt, "datetime", At):
+        assert scheduler._sleep_seconds(s) == settings_interval(s)
