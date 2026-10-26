@@ -15,7 +15,21 @@
 # frontend, which lives in a sibling directory. Devtron: Build Context = `.`,
 # Dockerfile Path = `eaze-referral-service/Dockerfile`.
 
-FROM node:20-bookworm-slim AS web
+# Pinned to a full patch version, not `node:22`. The pin is what makes a build reproducible and
+# what turns the next security advisory into a visible one-line diff instead of silent base-image
+# drift. 22.23.4 is one of the versions patching the 21 Oct 2026 advisory (Brotli decoder RCE,
+# TLS certificate hostname checks, DNS lookups); Node 20 is end-of-life and will never get it.
+#
+# The exposure here is narrower than the advisory's headline: this stage only runs `expo export`
+# at build time and is then discarded — the runtime image is python:3.14-slim-bookworm and
+# contains no node binary at all, so nothing in production decodes untrusted input with it. What
+# does matter is the TLS hostname check, because `npm ci` below fetches over TLS: that one is a
+# supply-chain risk on the build itself.
+#
+# 22.x rather than 24/26: it is the current LTS line and the smallest move from 20, so the Expo
+# toolchain is least disturbed. Nothing here benefits from a newer runtime — the process lives
+# for the length of one build.
+FROM node:22.23.4-bookworm-slim AS web
 
 WORKDIR /build
 
